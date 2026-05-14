@@ -90,7 +90,12 @@ interface TradeSheetProps {
 export const TradeSheet = forwardRef<TradeSheetRef, TradeSheetProps>(({ initialArgs, onClosed }, ref) => {
   const sheet = useRef<BottomSheet>(null);
   const lastFireAt = useRef(0);
-  const [target, setTarget] = useState<State | null>(null);
+  // Seed `target` from initialArgs on the very first render so the sheet
+  // mounts with content + valid interactive props (handle, pan gestures).
+  // Doing this via a useEffect produced a one-frame window where Gorhom
+  // measured an empty sheet and snapped to a tiny height near the navbar
+  // — that was the "click karta hu lekin pura open nahi hota" bug.
+  const [target, setTarget] = useState<State | null>(initialArgs ?? null);
   const [side, setSide] = useState<SideTab>("BUY");
   const [mode, setMode] = useState<Mode>("market");
   // Seeded with "" so the first paint doesn't flash "0.01" before the
@@ -136,28 +141,10 @@ export const TradeSheet = forwardRef<TradeSheetRef, TradeSheetProps>(({ initialA
     close: () => sheet.current?.close(),
   }));
 
-  // Auto-open on mount when the provider hands us initialArgs. This is
-  // what makes the lazy-mount flow work: provider calls setMounted(true),
-  // we render, then THIS effect snaps the sheet open to index 0 with the
-  // pending args — caller never has to wire an explicit open() after.
-  const autoOpenedRef = useRef(false);
-  useEffect(() => {
-    if (autoOpenedRef.current) return;
-    if (!initialArgs?.token) return;
-    autoOpenedRef.current = true;
-    setTarget(initialArgs);
-    seededTokenRef.current = null;
-    setLots("");
-    setMode("market");
-    setSide("BUY");
-    setSlTpEnabled(false);
-    setStopLoss("");
-    setTakeProfit("");
-    setLimitPrice("");
-    requestAnimationFrame(() => {
-      sheet.current?.snapToIndex(0);
-    });
-  }, [initialArgs]);
+  // The sheet starts at index=0 when initialArgs are provided (see the
+  // <BottomSheet index={...}> below), so no snapToIndex effect is needed
+  // on mount — Gorhom opens it itself with the right content already in
+  // place. This eliminates the race that produced the half-height sheet.
 
   const snapPoints = useMemo(() => ["90%"], []);
 
@@ -403,10 +390,16 @@ export const TradeSheet = forwardRef<TradeSheetRef, TradeSheetProps>(({ initialA
   // imperative `open()` call from a Buy/Sell tap.
   const interactive = target != null;
 
+  // Mount in the OPEN state when the provider gave us initialArgs, otherwise
+  // stay fully closed (-1). Combined with the lazy-mount in TradeSheetProvider
+  // this means the sheet is born fully expanded on the first frame the user
+  // taps a stock — no race between mount, layout, and `snapToIndex`.
+  const initialIndex = initialArgs?.token ? 0 : -1;
+
   return (
     <BottomSheet
       ref={sheet}
-      index={-1}
+      index={initialIndex}
       snapPoints={snapPoints}
       // FALSE forces the sheet to honour `snapPoints` instead of measuring
       // content height (which, on first open, was empty → tiny sheet near
