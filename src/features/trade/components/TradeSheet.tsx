@@ -362,6 +362,14 @@ export const TradeSheet = forwardRef<TradeSheetRef>((_, ref) => {
     });
   }
 
+  // Gorhom keeps the handle / pan area listening to gestures even at
+  // index=-1, so an upward swipe from the bottom of ANY screen was
+  // dragging the empty sheet open (the "niche se kuch open ho ke pura
+  // app patch ho jata hai" bug). When no target is set we hard-disable
+  // every pan + handle gesture so the sheet can ONLY open via the
+  // imperative `open()` call from a Buy/Sell tap.
+  const interactive = target != null;
+
   return (
     <BottomSheet
       ref={sheet}
@@ -371,7 +379,11 @@ export const TradeSheet = forwardRef<TradeSheetRef>((_, ref) => {
       // content height (which, on first open, was empty → tiny sheet near
       // navbar — the user's reported bug).
       enableDynamicSizing={false}
-      enablePanDownToClose
+      enablePanDownToClose={interactive}
+      enableHandlePanningGesture={interactive}
+      enableContentPanningGesture={interactive}
+      enableOverDrag={false}
+      handleComponent={interactive ? undefined : null}
       backdropComponent={Backdrop}
       backgroundStyle={{ backgroundColor: colors.bg }}
       handleIndicatorStyle={{ backgroundColor: colors.textDim }}
