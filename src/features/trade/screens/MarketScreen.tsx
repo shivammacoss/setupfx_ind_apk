@@ -99,10 +99,18 @@ export function MarketScreen() {
   // first time they tap a star so the action never silently no-ops.
   const watchlists = useMarketwatchList();
   const activeWl = watchlists.data?.[0];
+  // Backend's marketwatch payload mixes two field names depending on the
+  // path: `token` for items added via the unified marketwatch endpoint,
+  // `instrument_token` for items mirrored from the segment-watch list.
+  // Reading both keeps the favourite-star yellow regardless of which
+  // shape the server returned on the most recent refetch (without this
+  // the star turned yellow optimistically and then flipped back to gray
+  // when the server response landed — the user's bug).
   const favTokens = useMemo(() => {
     const s = new Set<string>();
     for (const it of activeWl?.items ?? []) {
-      if (it.token) s.add(String(it.token));
+      const t = it.token ?? it.instrument_token;
+      if (t) s.add(String(t));
     }
     return s;
   }, [activeWl]);

@@ -68,7 +68,14 @@ export function useAddMarketwatchItem() {
         if (!prev) return prev;
         return prev.map((w) =>
           w.id === id
-            ? { ...w, items: [...(w.items ?? []), { token }] }
+            ? {
+                ...w,
+                // Seed BOTH fields so favTokens picks up the entry no
+                // matter which key the read path checks (some screens
+                // read `token`, segment-mirrored rows read
+                // `instrument_token`).
+                items: [...(w.items ?? []), { token, instrument_token: token }],
+              }
             : w,
         );
       });
@@ -97,9 +104,12 @@ export function useRemoveMarketwatchItem() {
           w.id === id
             ? {
                 ...w,
-                items: (w.items ?? []).filter(
-                  (it) => String(it.token) !== String(token),
-                ),
+                // Filter by EITHER key so the remove path mirrors the
+                // dual-field add path above.
+                items: (w.items ?? []).filter((it) => {
+                  const t = it.token ?? it.instrument_token;
+                  return String(t) !== String(token);
+                }),
               }
             : w,
         );
