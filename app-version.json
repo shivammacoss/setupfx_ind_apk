@@ -1,0 +1,15 @@
+{
+  "$comment": "Bump this file each time you ship a new APK build. The mobile app fetches it from GitHub Raw on Profile -> App updates. `apk_url` should point to the EAS-built APK (the Install link from expo.dev/builds/...). `changelog` lines render as bullet points.",
+  "version": "0.1.0",
+  "build": 2,
+  "released_at": "2026-05-14",
+  "apk_url": "https://expo.dev/accounts/shivam92388/projects/setupfx-ind/builds/5d07da3e-03b4-4b47-82ad-e74b54b3cef6",
+  "min_supported_build": 1,
+  "force_update": false,
+  "changelog": [
+    "Fixed taps not firing on the login screen",
+    "Made login + register much faster — dropped CDN sound preload from boot",
+    "Stopped the empty bottom sheet from opening when you swipe up from the bottom",
+    "Added this Updates page so you can grab new builds from inside the app"
+  ]
+}

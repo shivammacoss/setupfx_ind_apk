@@ -77,7 +77,17 @@ function Backdrop(props: BottomSheetBackdropProps) {
   );
 }
 
-export const TradeSheet = forwardRef<TradeSheetRef>((_, ref) => {
+interface TradeSheetProps {
+  // Set when the provider lazy-mounts us in response to an `open()` call.
+  // The mount effect below picks this up and auto-opens the sheet on the
+  // first frame so the caller never has to do `open()` after `setMounted`.
+  initialArgs?: { token: string; symbol?: string; name?: string } | null;
+  // Fired AFTER Gorhom's close animation completes — provider uses this
+  // to unmount the entire sheet so non-trade screens stay sheet-free.
+  onClosed?: () => void;
+}
+
+export const TradeSheet = forwardRef<TradeSheetRef, TradeSheetProps>(({ initialArgs, onClosed }, ref) => {
   const sheet = useRef<BottomSheet>(null);
   const lastFireAt = useRef(0);
   const [target, setTarget] = useState<State | null>(null);
@@ -125,6 +135,29 @@ export const TradeSheet = forwardRef<TradeSheetRef>((_, ref) => {
     },
     close: () => sheet.current?.close(),
   }));
+
+  // Auto-open on mount when the provider hands us initialArgs. This is
+  // what makes the lazy-mount flow work: provider calls setMounted(true),
+  // we render, then THIS effect snaps the sheet open to index 0 with the
+  // pending args — caller never has to wire an explicit open() after.
+  const autoOpenedRef = useRef(false);
+  useEffect(() => {
+    if (autoOpenedRef.current) return;
+    if (!initialArgs?.token) return;
+    autoOpenedRef.current = true;
+    setTarget(initialArgs);
+    seededTokenRef.current = null;
+    setLots("");
+    setMode("market");
+    setSide("BUY");
+    setSlTpEnabled(false);
+    setStopLoss("");
+    setTakeProfit("");
+    setLimitPrice("");
+    requestAnimationFrame(() => {
+      sheet.current?.snapToIndex(0);
+    });
+  }, [initialArgs]);
 
   const snapPoints = useMemo(() => ["90%"], []);
 
@@ -387,7 +420,10 @@ export const TradeSheet = forwardRef<TradeSheetRef>((_, ref) => {
       backdropComponent={Backdrop}
       backgroundStyle={{ backgroundColor: colors.bg }}
       handleIndicatorStyle={{ backgroundColor: colors.textDim }}
-      onClose={() => setTarget(null)}
+      onClose={() => {
+        setTarget(null);
+        onClosed?.();
+      }}
     >
       <BottomSheetView style={{ paddingHorizontal: 16, paddingTop: 4, paddingBottom: 24 }}>
         {target ? (

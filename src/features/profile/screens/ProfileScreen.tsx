@@ -149,7 +149,14 @@ export function ProfileScreen() {
               icon="settings-outline"
               title="App settings"
               subtitle="Theme, language, biometric, notifications"
+              divider
               onPress={() => router.push("/settings")}
+            />
+            <Row
+              icon="cloud-download-outline"
+              title="App updates"
+              subtitle="Check what's new and grab the latest build"
+              onPress={() => router.push("/profile/update")}
             />
           </ProfileSection>
         </View>
