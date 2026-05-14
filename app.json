@@ -27,7 +27,7 @@
     },
     "android": {
       "package": "com.setupfx.ind",
-      "versionCode": 1,
+      "versionCode": 2,
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#6D28D9"
@@ -39,7 +39,10 @@
         "android.permission.VIBRATE",
         "android.permission.RECORD_AUDIO"
       ],
-      "softwareKeyboardLayoutMode": "resize"
+      "softwareKeyboardLayoutMode": "resize",
+      "runtimeVersion": {
+        "policy": "appVersion"
+      }
     },
     "plugins": [
       "expo-router",
@@ -74,6 +77,9 @@
         "projectId": "8cac49b9-8b8e-4c1a-bf01-2ce91f8c1e64"
       }
     },
-    "owner": "shivam92388"
+    "owner": "shivam92388",
+    "updates": {
+      "url": "https://u.expo.dev/8cac49b9-8b8e-4c1a-bf01-2ce91f8c1e64"
+    }
   }
 }

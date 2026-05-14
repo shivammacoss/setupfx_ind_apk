@@ -28,7 +28,7 @@ function ThemedStatusBar() {
 
 export function AppProviders({ children }: Props) {
   return (
-    <GestureHandlerRootView className="flex-1">
+    <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <ThemeProvider>
           <QueryProvider>
