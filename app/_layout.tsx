@@ -7,18 +7,6 @@ import { ErrorBoundary } from "@shared/components/ErrorBoundary";
 import { bootstrapStorage } from "@core/storage/mmkv";
 import { useThemeStore } from "@shared/store/theme.store";
 import { colors } from "@shared/theme";
-import { preloadSounds, setSoundSource } from "@shared/services/sounds";
-
-// Default trade-action tones. Public CDN-hosted short MP3s — small (~5 KB
-// each), free, and load instantly. Swap these for `require()`'d bundled
-// assets once `assets/sounds/{buy,sell,close}.mp3` exist (then preload at
-// boot still gives instant first-tap playback).
-const DEFAULT_BUY_SOUND =
-  "https://cdn.pixabay.com/download/audio/2022/03/15/audio_2c2c0a0e08.mp3?filename=notification-sound-7062.mp3";
-const DEFAULT_SELL_SOUND =
-  "https://cdn.pixabay.com/download/audio/2022/03/24/audio_1cb02c34cb.mp3?filename=notification-3-126507.mp3";
-const DEFAULT_CLOSE_SOUND =
-  "https://cdn.pixabay.com/download/audio/2022/03/15/audio_8cb749cee0.mp3?filename=interface-124464.mp3";
 
 export default function RootLayout() {
   const [ready, setReady] = useState(false);
@@ -27,18 +15,15 @@ export default function RootLayout() {
   useEffect(() => {
     void bootstrapStorage().then(() => {
       hydrateTheme();
-      // Register the default trade-action tone URLs and pre-warm the
-      // audio players so the first BUY/SELL/close tap plays its tone on
-      // the same frame as the press (no decode/setAudioMode latency
-      // paid by the user). Safe to call before `setReady` — runs in
-      // background; if any URL fails, that kind silently degrades to
-      // haptic-only.
-      setSoundSource("buy", DEFAULT_BUY_SOUND);
-      setSoundSource("sell", DEFAULT_SELL_SOUND);
-      setSoundSource("close", DEFAULT_CLOSE_SOUND);
-      preloadSounds();
       setReady(true);
     });
+    // Trade-action tones are intentionally NOT preloaded here anymore.
+    // Previously we kicked off three CDN fetches (Pixabay MP3s) on every
+    // cold boot — in a release APK on a slow connection that blocked the
+    // JS thread for seconds and produced the "login page bar bar load le
+    // raha hai" symptom. Sounds now load lazily inside `sounds.play()`
+    // the first time the user actually places a trade; the auth screens
+    // never pay that cost.
   }, [hydrateTheme]);
 
   if (!ready) {
