@@ -353,7 +353,21 @@ function orderErrorMessage(e: ApiError): string {
   switch (e.code) {
     case "INSUFFICIENT_FUNDS":
       return "Insufficient balance — add funds to place this trade.";
+    // ── Admin Risk Management codes — emitted by the backend's
+    //    order_validator when global / per-user risk rules fire. Mapping
+    //    them explicitly here lets the user see WHY their order was
+    //    rejected (instead of a generic "Order rejected" toast).
+    case "EXIT_ONLY_MODE":
+      return "Exit-only mode is on — only closing trades are allowed right now.";
+    case "LOT_PER_ORDER_MAX":
+      return e.message || "Lots exceed the admin's per-order maximum.";
+    case "SEGMENT_NOT_ALLOWED":
+      return e.message || "Trading is paused for this segment — only closing trades are allowed.";
+    case "HOLD_TIME_GUARD":
+      return e.message || "Hold-time guard active — wait before closing this trade.";
     case "ORDER_REJECTED":
+      // OrderRejectedError without a more-specific code — surface the
+      // backend's prose verbatim (it carries the actual reason).
       return e.message || "Order rejected by risk checks.";
     case "VALIDATION_FAILED":
       return e.message || "Invalid order — check lots / price and try again.";
