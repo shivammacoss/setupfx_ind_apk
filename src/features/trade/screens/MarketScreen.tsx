@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import {
   Pressable,
   RefreshControl,
@@ -314,8 +314,10 @@ function BucketChips({
                 size="sm"
                 style={{
                   color: active ? colors.textInverse : colors.text,
-                  fontWeight: "600",
-                  fontSize: 13,
+                  fontWeight: "700",
+                  fontSize: 12,
+                  letterSpacing: 0.6,
+                  textTransform: "uppercase",
                 }}
               >
                 {b.label}
@@ -497,7 +499,24 @@ function ManagedSegmentList({
 
   const rows = showingSearch ? searchRows : curatedRows;
 
-  const tokens = useMemo(
+  // ── Viewable-row token subscription ────────────────────────────────
+  // Previously we subscribed the WS to EVERY token in `rows` — 80
+  // results from a search, of which the user actually sees ~10-15 in
+  // the viewport. The backend pump (now parallelised) still has to
+  // refresh every subscribed token's overlay every 250 ms, so
+  // 80-tokens-subscribed-when-only-15-visible is 5× more work than
+  // necessary AND scales the round-trip JSON payload with it.
+  //
+  // FlashList's `onViewableItemsChanged` fires whenever a row scrolls
+  // into / out of the configured visibility threshold. We track the
+  // visible token set in a ref (no re-render per scroll tick) and pass
+  // it to `useTickerSubscription`. Initial paint seeds with the first
+  // 20 tokens so the user sees prices the instant the list mounts —
+  // viewability events fire AFTER the first frame paints, so seeding
+  // is what removes the "blank prices for 1 frame on every search"
+  // flicker.
+  const [visibleTokens, setVisibleTokens] = useState<string[]>([]);
+  const allTokens = useMemo(
     () =>
       rows.map((r) =>
         "instrument_token" in r && r.instrument_token
@@ -506,7 +525,38 @@ function ManagedSegmentList({
       ),
     [rows],
   );
-  useTickerSubscription(tokens);
+  // Seed with top-N so the visible-prices flow doesn't wait for the
+  // first viewability event (which can be 100-200 ms after mount on
+  // slow Android devices).
+  const seededTokens = useMemo(
+    () => allTokens.slice(0, 20),
+    [allTokens.join(",")], // eslint-disable-line react-hooks/exhaustive-deps
+  );
+  const subscribedTokens =
+    visibleTokens.length > 0 ? visibleTokens : seededTokens;
+  useTickerSubscription(subscribedTokens);
+
+  const viewabilityConfig = useMemo(
+    () => ({
+      itemVisiblePercentThreshold: 25,
+      minimumViewTime: 50,
+    }),
+    [],
+  );
+  const onViewableItemsChanged = useRef(
+    ({ viewableItems }: { viewableItems: Array<{ item: SegmentItem | Instrument }> }) => {
+      const next: string[] = [];
+      for (const v of viewableItems) {
+        const it = v.item;
+        const t =
+          "instrument_token" in it && it.instrument_token
+            ? String(it.instrument_token)
+            : String((it as Instrument).token);
+        if (t) next.push(t);
+      }
+      setVisibleTokens(next);
+    },
+  ).current;
 
   if (rows.length === 0) {
     if (showingSearch && search.isLoading) return <LoaderRow />;
@@ -538,6 +588,8 @@ function ManagedSegmentList({
       }
       contentContainerStyle={{ paddingHorizontal: 14, paddingBottom }}
       keyboardShouldPersistTaps="handled"
+      viewabilityConfig={viewabilityConfig}
+      onViewableItemsChanged={onViewableItemsChanged}
       renderItem={({ item }) => {
         const token =
           "instrument_token" in item && item.instrument_token
@@ -598,8 +650,34 @@ function FeedSegmentList({
     limit: 120,
   });
   const rows = data ?? [];
-  const tokens = useMemo(() => rows.map((r) => String(r.token)), [rows]);
-  useTickerSubscription(tokens);
+  // Viewable-only WS subscription — see ManagedSegmentList for the
+  // full rationale. 120-result feeds (FOREX / CRYPTO / INDICES) were
+  // subscribing every token to the backend pump, which then refreshed
+  // each of them every 250 ms even though the user could only see
+  // ~15 rows at a time.
+  const allTokens = useMemo(() => rows.map((r) => String(r.token)), [rows]);
+  const [visibleTokens, setVisibleTokens] = useState<string[]>([]);
+  const seededTokens = useMemo(
+    () => allTokens.slice(0, 20),
+    [allTokens.join(",")], // eslint-disable-line react-hooks/exhaustive-deps
+  );
+  const subscribedTokens =
+    visibleTokens.length > 0 ? visibleTokens : seededTokens;
+  useTickerSubscription(subscribedTokens);
+  const viewabilityConfig = useMemo(
+    () => ({ itemVisiblePercentThreshold: 25, minimumViewTime: 50 }),
+    [],
+  );
+  const onViewableItemsChanged = useRef(
+    ({ viewableItems }: { viewableItems: Array<{ item: Instrument }> }) => {
+      const next: string[] = [];
+      for (const v of viewableItems) {
+        const t = String(v.item?.token ?? "");
+        if (t) next.push(t);
+      }
+      setVisibleTokens(next);
+    },
+  ).current;
 
   if (rows.length === 0) {
     if (isLoading) return <LoaderRow />;
@@ -618,6 +696,8 @@ function FeedSegmentList({
       keyExtractor={(it) => it.token}
       contentContainerStyle={{ paddingHorizontal: 14, paddingBottom }}
       keyboardShouldPersistTaps="handled"
+      viewabilityConfig={viewabilityConfig}
+      onViewableItemsChanged={onViewableItemsChanged}
       renderItem={({ item }) => (
         <InstrumentRow
           token={item.token}

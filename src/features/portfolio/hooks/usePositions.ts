@@ -17,6 +17,7 @@ import { ApiError } from "@core/api/errors";
 import { useUiStore } from "@shared/store/ui.store";
 import { useAuthStore } from "@features/auth/store/auth.store";
 import { sounds } from "@shared/services/sounds";
+import { isInstrumentMarketOpen, marketLabel } from "@shared/utils/marketHours";
 
 const OPEN_KEY = ["positions", "open"] as const;
 const CLOSED_KEY = ["positions", "closed"] as const;
@@ -325,6 +326,29 @@ export function useCloseActiveTrade() {
       // labelled optimistic close order.
       const closingTrade = activeSnap?.find((t) => t.id === tradeId);
 
+      // ── Market-closed pre-check ─────────────────────────────────
+      // Same gate as `useSquareoffPosition` — abort before any cache
+      // mutation so the "row vanishes for 1 sec then comes back"
+      // flicker can't happen when market is closed.
+      if (
+        closingTrade &&
+        !isInstrumentMarketOpen(
+          closingTrade.segment ?? closingTrade.exchange,
+          closingTrade.exchange,
+        )
+      ) {
+        const label = marketLabel(
+          closingTrade.segment ?? closingTrade.exchange,
+          closingTrade.exchange,
+        );
+        pushToast({
+          kind: "warn",
+          message: `${label} market is closed — try closing during trading hours.`,
+          ttlMs: 4000,
+        });
+        throw new ApiError(`${label} market is closed`, "MARKET_CLOSED");
+      }
+
       // ─── Active trades cache ────────────────────────────────────────
       qc.setQueryData<ActiveTrade[]>(ACTIVE_KEY, (prev) =>
         prev ? prev.filter((t) => t.id !== tradeId) : prev,
@@ -523,6 +547,32 @@ export function useSquareoffPosition() {
       // Capture the closing position BEFORE we mutate so we can match its
       // related active trades by token + product + direction.
       const closingPos = openSnap?.find((p) => p.id === id);
+
+      // ── Market-closed pre-check ─────────────────────────────────
+      // Without this, tapping CLOSE outside trading hours fired the
+      // full optimistic-remove pipeline below (row disappears, orders
+      // cache gets a placeholder), then the backend rejected with
+      // MARKET_CLOSED and we rolled everything back. The user saw the
+      // position card vanish for ~1 second and reappear — "trade
+      // close ho jata hai 1 sec ke liye fir waapas aa jata hai".
+      // Resolve segment/exchange off the cached position, abort the
+      // mutation before any cache mutation happens, and surface a
+      // single clear toast.
+      if (
+        closingPos &&
+        !isInstrumentMarketOpen(closingPos.segment_type, closingPos.exchange)
+      ) {
+        const label = marketLabel(closingPos.segment_type, closingPos.exchange);
+        pushToast({
+          kind: "warn",
+          message: `${label} market is closed — try closing during trading hours.`,
+          ttlMs: 4000,
+        });
+        // Throwing from onMutate aborts the mutation entirely; the
+        // onError handler below skips the rollback path because no
+        // context was returned.
+        throw new ApiError(`${label} market is closed`, "MARKET_CLOSED");
+      }
 
       // ─── Open positions cache ───────────────────────────────────────
       qc.setQueryData<Position[]>(OPEN_KEY, (prev) => {

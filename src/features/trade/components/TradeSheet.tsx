@@ -28,6 +28,7 @@ import {
 } from "@features/trade/hooks/useEffectiveSettings";
 import { useInstrumentLabel } from "@features/trade/hooks/useInstrument";
 import { lookupInfowayLot } from "@features/trade/utils/infowayLots";
+import { isInstrumentMarketOpen, marketLabel } from "@shared/utils/marketHours";
 import { useWalletSummary } from "@features/wallet/hooks/useWallet";
 import { usePnLSummary } from "@features/portfolio/hooks/usePositions";
 import { useUiStore } from "@shared/store/ui.store";
@@ -359,6 +360,48 @@ export const TradeSheet = forwardRef<TradeSheetRef, TradeSheetProps>(({ initialA
     const value = num(lots);
     if (value <= 0) {
       pushToast({ kind: "warn", message: "Enter lots greater than 0" });
+      return;
+    }
+    // ── Admin per-order lot cap pre-check ─────────────────────────
+    // Backend rejects with code `LOT_PER_ORDER_MAX` when `lots`
+    // exceeds the admin's `order_lot` cap. Without this client-side
+    // mirror, the optimistic flow (haptic + green toast + cached
+    // position insert) fired before the backend rejection landed —
+    // the user reported "10 lots typed, 5 lots ho gaya" because they
+    // didn't see the rejection clearly enough. We surface it BEFORE
+    // place.mutate so there's no flicker, no audio cue, no green
+    // toast — just one clear red warning.
+    const adminMaxLot = Number(effective.data?.order_lot ?? 0);
+    if (adminMaxLot > 0 && value > adminMaxLot) {
+      pushToast({
+        kind: "warn",
+        message: `Maximum ${adminMaxLot} lot(s) per order`,
+      });
+      return;
+    }
+    if (adminMinLot > 0 && value < adminMinLot) {
+      pushToast({
+        kind: "warn",
+        message: `Minimum ${adminMinLot} lot(s) required`,
+      });
+      return;
+    }
+    // ── Market-closed pre-check ────────────────────────────────
+    // Without this the user sees a green "BUY 1 placed" toast
+    // for 500-1000 ms before the backend's MarketClosedError lands
+    // and rolls everything back. Same pattern the close-side
+    // hooks use — gate BEFORE place.mutate so there's no flicker.
+    // Segment comes from the resolved admin settings (canonical),
+    // exchange from the instrument label fallback.
+    const segForHours = effective.data?.segment_type;
+    const exchForHours = (label as { exchange?: string } | null)?.exchange;
+    if (!isInstrumentMarketOpen(segForHours, exchForHours)) {
+      const closedLabel = marketLabel(segForHours, exchForHours);
+      pushToast({
+        kind: "warn",
+        message: `${closedLabel} market is closed. Try placing an AMO instead.`,
+        ttlMs: 4000,
+      });
       return;
     }
     // LIMIT order — parse + validate the user-entered price. Backend's

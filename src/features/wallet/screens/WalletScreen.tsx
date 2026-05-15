@@ -196,6 +196,9 @@ function HeroCard({
             fontWeight: "800",
             marginTop: 4,
           }}
+          numberOfLines={1}
+          adjustsFontSizeToFit
+          minimumFontScale={0.6}
         >
           {loading ? "—" : formatINR(available)}
         </Text>
@@ -211,13 +214,14 @@ function HeroCard({
           flexDirection: "row",
           backgroundColor: "rgba(0,0,0,0.18)",
           borderRadius: radii.lg,
-          paddingVertical: 10,
+          paddingVertical: 12,
+          paddingHorizontal: 4,
         }}
       >
-        <HeroStat label="Used margin" value={formatINR(usedMargin)} />
-        <View style={{ width: 1, backgroundColor: "rgba(255,255,255,0.18)" }} />
-        <HeroStat label="Credit limit" value={formatINR(credit)} />
-        <View style={{ width: 1, backgroundColor: "rgba(255,255,255,0.18)" }} />
+        <HeroStat label="Used" value={formatINR(usedMargin)} />
+        <View style={{ width: 1, marginVertical: 4, backgroundColor: "rgba(255,255,255,0.18)" }} />
+        <HeroStat label="Credit" value={formatINR(credit)} />
+        <View style={{ width: 1, marginVertical: 4, backgroundColor: "rgba(255,255,255,0.18)" }} />
         <HeroStat label="Realised P&L" value={formatINR(realised)} />
       </View>
     </LinearGradient>
@@ -225,22 +229,40 @@ function HeroCard({
 }
 
 function HeroStat({ label, value }: { label: string; value: string }) {
+  // `adjustsFontSizeToFit` + `numberOfLines={1}` lets RN shrink the
+  // value down to ~70% of the base when the number is long
+  // (e.g. ₹1,23,456.78). Previously the value was clipped mid-digit
+  // ("₹6." for a ₹6,234 used margin) because the column was too
+  // narrow for the full string at fixed 12 px. Labels are now stable
+  // 2-line max so "Realised P&L" doesn't bleed into the next column.
   return (
-    <View style={{ flex: 1, alignItems: "center", gap: 2 }}>
+    <View
+      style={{
+        flex: 1,
+        alignItems: "center",
+        justifyContent: "center",
+        paddingHorizontal: 4,
+        gap: 3,
+      }}
+    >
       <Text
         style={{
           color: "rgba(255,255,255,0.7)",
           fontSize: 9,
-          fontWeight: "600",
-          letterSpacing: 0.6,
+          fontWeight: "700",
+          letterSpacing: 0.5,
+          textAlign: "center",
         }}
+        numberOfLines={2}
       >
         {label.toUpperCase()}
       </Text>
       <Text
         mono
-        style={{ color: "#fff", fontSize: 12, fontWeight: "700" }}
+        style={{ color: "#fff", fontSize: 13, fontWeight: "700", textAlign: "center" }}
         numberOfLines={1}
+        adjustsFontSizeToFit
+        minimumFontScale={0.7}
       >
         {value}
       </Text>
