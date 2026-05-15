@@ -8,6 +8,7 @@ export interface LiveWalletKpi {
   available: number;
   used: number;
   m2m: number;
+  cfRequired: number;
 }
 
 /**
@@ -65,5 +66,24 @@ export function useLiveWalletKpi(): LiveWalletKpi {
     return total;
   }, [openPositions.data]);
 
-  return { ledger, available, used, m2m };
+  // CF (Carry Forward) Required = the EXTRA cash a user needs to convert
+  // every open MIS position to NRML so it can be held overnight. Mirrors
+  // the backend's `holding_margin` formula on /active-trades:
+  //   MIS  → holding = used × 1.4   ⇒ extra = used × 0.4
+  //   NRML → holding = used         ⇒ extra = 0 (already overnight)
+  // Computed locally from the same /positions/open data the row cards
+  // use, so the strip never disagrees with the per-row holding column.
+  const cfRequired = useMemo(() => {
+    const rows: Position[] = openPositions.data ?? [];
+    if (rows.length === 0) return 0;
+    let total = 0;
+    for (const p of rows) {
+      const isMIS = (p.product_type || "").toUpperCase() === "MIS";
+      if (!isMIS) continue;
+      total += (Number(p.margin_used) || 0) * 0.4;
+    }
+    return total;
+  }, [openPositions.data]);
+
+  return { ledger, available, used, m2m, cfRequired };
 }

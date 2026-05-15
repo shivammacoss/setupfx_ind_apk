@@ -24,7 +24,7 @@ interface Props {
 //   Used      = used_margin                        (patched optimistically)
 //   M2M       = Σ (live_ltp - avg_price) × signed_qty   ← live tick-driven
 function WalletKpiStripImpl(_props: Props) {
-  const { ledger, available: avail, used, m2m } = useLiveWalletKpi();
+  const { ledger, available: avail, used, m2m, cfRequired } = useLiveWalletKpi();
 
   return (
     <View
@@ -54,6 +54,16 @@ function WalletKpiStripImpl(_props: Props) {
           tone={m2m > 0 ? "buy" : m2m < 0 ? "sell" : "default"}
         />
       </View>
+      {/* CF Required — full-width 5th tile. Surfaces the extra margin a
+          user needs to roll all open MIS positions to NRML overnight.
+          Computed locally from `margin_used × 0.4` per MIS row, matching
+          the backend's `holding_margin` formula on /active-trades. */}
+      <View style={{ height: 1, backgroundColor: colors.border }} />
+      <Kpi
+        label="CF REQUIRED"
+        value={formatINR(cfRequired)}
+        tone={cfRequired > avail ? "sell" : "default"}
+      />
     </View>
   );
 }
