@@ -192,10 +192,13 @@ export function PortfolioScreen() {
     (r: PositionRowData) => {
       if (r.status === "OPEN" && r.instrument_token) {
         setTradeForId(r.id);
-      } else if (r.instrument_token) {
-        // CLOSED row → open the chart for that instrument so the user
-        // can review the price action that led to the close.
-        router.push({ pathname: "/(tabs)/trade", params: { token: r.instrument_token } });
+      } else {
+        // CLOSED row → open the full trade-detail page for this
+        // position so the user can review every field (entry, exit,
+        // P&L breakdown, charges, margin, close reason, hold time,
+        // SL/TP, USD/INR rates). The chart is reachable via the
+        // "View chart" action button inside the detail page.
+        router.push({ pathname: "/positions/[id]", params: { id: r.id } });
       }
     },
     [],
