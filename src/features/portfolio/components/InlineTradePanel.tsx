@@ -47,6 +47,10 @@ function InlineTradePanelImpl({
   const [mode, setMode] = useState<"market" | "limit">("market");
   const [lotsStr, setLotsStr] = useState<string>("1");
   const [limitPriceStr, setLimitPriceStr] = useState<string>("");
+  // Same LOT ⇄ QTY toggle the Market-page TradeSheet uses. `lotsStr`
+  // stays the canonical value; QTY mode just shows it multiplied by
+  // `lot_size` and converts the typed value back on edit.
+  const [inputMode, setInputMode] = useState<"LOT" | "QTY">("LOT");
 
   const tick = useTicker(token);
   const effective = useEffectiveSettings(token, side, "MIS");
@@ -90,6 +94,34 @@ function InlineTradePanelImpl({
       +((lotsNum || 0) + direction * step).toFixed(4),
     );
     setLotsStr(String(next));
+  }
+
+  // Display value for the lot input — `lotsStr` directly in LOT mode,
+  // or `lotsNum × lot_size` in QTY mode (presented as a clean integer
+  // where it can be — "100" instead of "100.0000" for whole contracts).
+  const inputDisplayValue =
+    inputMode === "QTY"
+      ? (() => {
+          if (!Number.isFinite(lotsNum) || !lotsNum) return "";
+          const q = lotsNum * lotSize;
+          return Number.isInteger(q) ? String(q) : String(+q.toFixed(3));
+        })()
+      : lotsStr;
+
+  function onLotsInputChange(raw: string) {
+    const clean = raw.replace(/[^\d.]/g, "");
+    if (inputMode === "LOT") {
+      setLotsStr(clean);
+      return;
+    }
+    if (clean === "" || clean === ".") {
+      setLotsStr("");
+      return;
+    }
+    const qty = Number(clean);
+    if (!Number.isFinite(qty)) return;
+    const nextLots = +(qty / lotSize).toFixed(4);
+    setLotsStr(String(nextLots));
   }
 
   function fire(action: "BUY" | "SELL") {
@@ -209,14 +241,62 @@ function InlineTradePanelImpl({
           </View>
         ) : null}
         <View style={{ flex: 1 }}>
-          <Text size="xs" tone="dim" style={{ marginBottom: 4, fontWeight: "700" }}>
-            LOTS
-          </Text>
+          {/* Label row pairs the unit caption with the LOT⇄QTY pill so
+              the user can flip units without losing context. Same
+              affordance pattern the Market-page TradeSheet uses. */}
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "space-between",
+              marginBottom: 4,
+            }}
+          >
+            <Text size="xs" tone="dim" style={{ fontWeight: "700" }}>
+              {inputMode === "LOT" ? "LOTS" : "QTY"}
+            </Text>
+            <Pressable
+              onPress={() => {
+                void Haptics.selectionAsync();
+                setInputMode((m) => (m === "LOT" ? "QTY" : "LOT"));
+              }}
+              hitSlop={6}
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 4,
+                paddingHorizontal: 8,
+                paddingVertical: 3,
+                borderRadius: 999,
+                borderWidth: 1,
+                borderColor:
+                  inputMode === "QTY" ? colors.primary : colors.border,
+                backgroundColor:
+                  inputMode === "QTY" ? colors.bgElevated : "transparent",
+              }}
+            >
+              <Ionicons
+                name="swap-horizontal"
+                size={11}
+                color={inputMode === "QTY" ? colors.primary : colors.textMuted}
+              />
+              <Text
+                size="xs"
+                style={{
+                  fontWeight: "700",
+                  color: inputMode === "QTY" ? colors.primary : colors.text,
+                  fontSize: 10,
+                }}
+              >
+                {inputMode === "LOT" ? "Qty" : "Lot"}
+              </Text>
+            </Pressable>
+          </View>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
             <StepBtn icon="remove" onPress={() => bumpLots(-1)} />
             <TextInput
-              value={lotsStr}
-              onChangeText={setLotsStr}
+              value={inputDisplayValue}
+              onChangeText={onLotsInputChange}
               keyboardType="decimal-pad"
               selectTextOnFocus
               style={{

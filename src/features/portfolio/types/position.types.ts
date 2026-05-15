@@ -16,6 +16,10 @@ export interface Position {
   segment_type?: string;
   product_type: string;
   quantity: number;
+  // Peak |quantity| this position ever held before close — stable across
+  // the full life cycle. Closed rows have `quantity === 0`, so to display
+  // size/lots on the Closed-tab card we read `opening_quantity` instead.
+  opening_quantity?: number;
   lot_size?: number;
   lots?: number;
   avg_price: string;

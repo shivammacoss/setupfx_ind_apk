@@ -103,6 +103,16 @@ export const TradeSheet = forwardRef<TradeSheetRef, TradeSheetProps>(({ initialA
   // `order_lot ?? min_lot ?? 1` from /user/segment-settings/effective the
   // moment the response lands (typically <100 ms on cache hit).
   const [lots, setLots] = useState("");
+  // ── LOT ⇄ QTY input mode ─────────────────────────────────────────
+  // Tapping the "Qty" pill (top-right of the lot strip) flips the
+  // stepper between LOT and contract-quantity display. The canonical
+  // state stays `lots` — QTY mode is purely a presentation layer:
+  // editing the qty input divides by `lot_size` to update `lots`,
+  // bumping the stepper changes qty by exactly one lot_size, and the
+  // label below the input swaps "LOT" ↔ "QTY". The pill itself shows
+  // the OTHER unit (the one a tap would switch INTO) so the affordance
+  // reads naturally — "Qty" while in LOT mode, "Lot" while in QTY mode.
+  const [inputMode, setInputMode] = useState<"LOT" | "QTY">("LOT");
   const [slTpEnabled, setSlTpEnabled] = useState(false);
   const [stopLoss, setStopLoss] = useState("");
   const [takeProfit, setTakeProfit] = useState("");
@@ -127,6 +137,9 @@ export const TradeSheet = forwardRef<TradeSheetRef, TradeSheetProps>(({ initialA
       setStopLoss("");
       setTakeProfit("");
       setLimitPrice("");
+      // Reset to LOT mode on every new instrument so the user always
+      // sees the "lots" view first — that's the primary unit.
+      setInputMode("LOT");
       // Defer the snap call by one frame so React commits the `target`
       // state and the inner BottomSheet finishes its measurement pass
       // BEFORE we ask it to expand. Without this delay the FIRST open
@@ -230,6 +243,47 @@ export const TradeSheet = forwardRef<TradeSheetRef, TradeSheetProps>(({ initialA
     const next = Math.max(adminMinLot, +(current + direction * step).toFixed(3));
     setLots(String(next));
     void Haptics.selectionAsync();
+  }
+
+  // Resolved lot_size for this instrument (admin's segment settings).
+  // Falls back to 1 when the settings haven't resolved yet — that keeps
+  // LOT ↔ QTY conversion a no-op until we have a real lot table.
+  const lotSizeForConv =
+    effective.data?.lot_size != null && effective.data.lot_size > 0
+      ? Number(effective.data.lot_size)
+      : 1;
+
+  // Derived display value for the stepper input — `lots` is the
+  // canonical state; QTY mode renders `lots × lot_size`.
+  const stepperDisplayValue =
+    inputMode === "QTY"
+      ? (() => {
+          const n = num(lots);
+          if (!n) return "";
+          const q = n * lotSizeForConv;
+          // Strip trailing zeros so a 1-lot × 100-lot-size renders "100"
+          // instead of "100.000".
+          return Number.isInteger(q) ? String(q) : String(+q.toFixed(3));
+        })()
+      : lots;
+
+  function onStepperChangeText(raw: string) {
+    const clean = raw.replace(/[^\d.]/g, "");
+    if (inputMode === "LOT") {
+      setLots(clean);
+      return;
+    }
+    // QTY mode — divide the typed quantity by lot_size to derive lots.
+    // An empty input clears `lots`; otherwise we round to 3 decimals
+    // (same precision the bump path uses) so the saved value is stable.
+    if (clean === "" || clean === ".") {
+      setLots("");
+      return;
+    }
+    const qty = Number(clean);
+    if (!Number.isFinite(qty)) return;
+    const next = +(qty / lotSizeForConv).toFixed(3);
+    setLots(String(next));
   }
 
   function openChart() {
@@ -570,7 +624,17 @@ export const TradeSheet = forwardRef<TradeSheetRef, TradeSheetProps>(({ initialA
                 }
               />
               <View style={{ flex: 1, alignItems: "flex-end" }}>
-                <View
+                {/* LOT ⇄ QTY toggle. The pill label reads as the unit
+                    the user would switch INTO on tap — so "Qty" while
+                    in LOT mode, "Lot" while in QTY mode. Active state
+                    (QTY) inherits the brand accent so the user can
+                    tell at a glance which unit the input below shows. */}
+                <Pressable
+                  onPress={() => {
+                    void Haptics.selectionAsync();
+                    setInputMode((m) => (m === "LOT" ? "QTY" : "LOT"));
+                  }}
+                  hitSlop={6}
                   style={{
                     flexDirection: "row",
                     alignItems: "center",
@@ -578,18 +642,31 @@ export const TradeSheet = forwardRef<TradeSheetRef, TradeSheetProps>(({ initialA
                     paddingVertical: 6,
                     borderRadius: 999,
                     borderWidth: 1,
-                    borderColor: colors.border,
+                    borderColor:
+                      inputMode === "QTY" ? ACCENT_PURPLE : colors.border,
+                    backgroundColor:
+                      inputMode === "QTY" ? colors.bgElevated : "transparent",
                   }}
                 >
                   <Ionicons
                     name="swap-horizontal"
                     size={14}
-                    color={colors.textMuted}
+                    color={
+                      inputMode === "QTY" ? ACCENT_PURPLE : colors.textMuted
+                    }
                   />
-                  <Text size="xs" style={{ marginLeft: 6, fontWeight: "600" }}>
-                    Qty
+                  <Text
+                    size="xs"
+                    style={{
+                      marginLeft: 6,
+                      fontWeight: "700",
+                      color:
+                        inputMode === "QTY" ? ACCENT_PURPLE : colors.text,
+                    }}
+                  >
+                    {inputMode === "LOT" ? "Qty" : "Lot"}
                   </Text>
-                </View>
+                </Pressable>
               </View>
             </View>
 
@@ -661,8 +738,8 @@ export const TradeSheet = forwardRef<TradeSheetRef, TradeSheetProps>(({ initialA
                 <StepCircle dir="minus" onPress={() => bumpLots(-1)} />
                 <View style={{ flex: 1, alignItems: "center" }}>
                   <TextInput
-                    value={lots}
-                    onChangeText={(v) => setLots(v.replace(/[^\d.]/g, ""))}
+                    value={stepperDisplayValue}
+                    onChangeText={onStepperChangeText}
                     keyboardType="decimal-pad"
                     selectTextOnFocus
                     style={{
@@ -679,7 +756,7 @@ export const TradeSheet = forwardRef<TradeSheetRef, TradeSheetProps>(({ initialA
                     size="xs"
                     style={{ marginTop: -2, letterSpacing: 0.6 }}
                   >
-                    LOT
+                    {inputMode === "LOT" ? "LOT" : "QTY"}
                   </Text>
                 </View>
                 <StepCircle dir="plus" onPress={() => bumpLots(1)} />

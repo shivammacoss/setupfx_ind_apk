@@ -125,28 +125,61 @@ export function PositionDetailScreen() {
       : "SELL";
   const sideTone = side === "BUY" ? colors.buy : colors.sell;
 
-  const qty = Math.abs(Number(position.quantity) || 0);
+  // For OPEN rows `quantity` is the current signed contract count; for
+  // CLOSED rows it's been zeroed and the stable peak-size lives on
+  // `opening_quantity`. Read the right field so the Lots / Contracts
+  // figures on a closed BTCUSD don't both render as 0.
+  const sizeQty = isClosed
+    ? Math.abs(Number(position.opening_quantity ?? position.quantity) || 0)
+    : Math.abs(Number(position.quantity) || 0);
   const lotSize = Number(position.lot_size ?? 0) || 0;
-  const lots =
-    position.lots != null
-      ? Number(position.lots)
-      : lotSize > 0
-      ? qty / lotSize
-      : null;
+  // Lots: prefer the backend's computed `lots` field. On closed rows that
+  // field is also 0 (it's derived from current `quantity`), so re-derive
+  // from `opening_quantity / lot_size` instead.
+  const lots = isClosed
+    ? lotSize > 0
+      ? sizeQty / lotSize
+      : null
+    : position.lots != null
+    ? Number(position.lots)
+    : lotSize > 0
+    ? sizeQty / lotSize
+    : null;
 
   const entry = Number(position.avg_price) || 0;
   const ltp = Number(position.ltp) || 0;
   const realized = Number(position.realized_pnl) || 0;
   const unrealized = Number(position.unrealized_pnl) || 0;
-  // For CLOSED rows the lifetime P&L IS the realized number (unrealized
-  // is 0 by definition). For OPEN rows show floating + locked-in so
-  // partially-closed positions read correctly.
+  const charges = Number(position.charges ?? 0) || 0;
+
+  // Net P&L includes brokerage / commission. The API serializer already
+  // nets `realized_pnl` against charges (the user-reported "commission
+  // P&L mein add nahi ho rha" fix), but the older builds + a non-restarted
+  // backend would still return gross — so we defensively subtract the
+  // remaining charge delta here too. This is idempotent: if the API
+  // already netted, the row's `charges` field is what was paid, but
+  // `realized_pnl - charges` would double-deduct. To make this safe across
+  // both old and new backends we instead show a clear breakdown (Gross /
+  // Charges / Net) and compute Net = realized_pnl as-is when the API
+  // is the new serializer (positive when realized magnitude already
+  // < |gross|), else realized − charges.
+  //
+  // Simplest correct policy: trust the API to be authoritative for
+  // `realized_pnl`, and show a Gross row reconstructed as
+  // `realized + charges` (since realized is net). This way the breakdown
+  // reads:
+  //    Gross P&L   = realized + charges
+  //    Charges     = -charges
+  //    Net P&L     = realized  ←  matches the headline
+  // and the math visibly adds up.
+  //
+  // For OPEN rows we use unrealized as-is; for CLOSED rows we use realized.
   const netPnl = isClosed ? realized : unrealized + realized;
+  const grossPnl = isClosed ? realized + charges : netPnl + charges;
   const pnlTone =
     netPnl > 0 ? colors.buy : netPnl < 0 ? colors.sell : colors.textMuted;
 
   const margin = Number(position.margin_used ?? 0) || 0;
-  const charges = Number(position.charges ?? 0) || 0;
   const isUSD = position.currency_quote === "USD";
   const openRate = Number(position.open_usd_inr_rate ?? 0) || 0;
   const curRate = Number(position.current_usd_inr_rate ?? 0) || 0;
@@ -267,44 +300,100 @@ export function PositionDetailScreen() {
         </Card>
 
         {/* Quantity + lots ──────────────────────────────────────── */}
+        {/* "Contracts" row removed per user request — lots + lot size
+            already convey the size; contracts was the (qty / 1) repeat
+            of lots × lot_size which felt redundant on the card. */}
         <Card title="Quantity">
           <InfoRow
             label="Lots"
-            value={lots != null ? formatNumber(lots, lots % 1 === 0 ? 0 : 4) : "—"}
+            value={
+              lots != null && lots > 0
+                ? formatNumber(lots, lots % 1 === 0 ? 0 : 4)
+                : "—"
+            }
             mono
           />
           <InfoRow label="Lot size" value={lotSize > 0 ? String(lotSize) : "—"} mono />
-          <InfoRow label="Contracts" value={formatNumber(qty, qty % 1 === 0 ? 0 : 4)} mono />
         </Card>
 
-        {/* P&L breakdown ────────────────────────────────────────── */}
+        {/* P&L breakdown — Gross / Charges / Net so the user can SEE
+            the brokerage being deducted. The headline NET P&L at the
+            top of the page reads the same `netPnl` number, so the
+            breakdown's last row visually adds up to the headline. */}
         <Card title="P&amp;L breakdown">
-          <InfoRow
-            label="Realized P&L"
-            value={formatSigned(realized)}
-            mono
-            tone={realized > 0 ? colors.buy : realized < 0 ? colors.sell : undefined}
-          />
-          {!isClosed ? (
-            <InfoRow
-              label="Unrealized P&L"
-              value={formatSigned(unrealized)}
-              mono
-              tone={
-                unrealized > 0 ? colors.buy : unrealized < 0 ? colors.sell : undefined
-              }
-            />
+          {isClosed ? (
+            <>
+              <InfoRow
+                label="Gross P&L"
+                value={formatSigned(grossPnl)}
+                mono
+                tone={
+                  grossPnl > 0
+                    ? colors.buy
+                    : grossPnl < 0
+                    ? colors.sell
+                    : undefined
+                }
+              />
+              <InfoRow
+                label="Brokerage / charges"
+                value={charges > 0 ? `−${formatINR(charges)}` : "—"}
+                mono
+                tone={charges > 0 ? colors.sell : undefined}
+              />
+              <InfoRow
+                label="Net P&L"
+                value={formatSigned(netPnl)}
+                mono
+                tone={
+                  netPnl > 0
+                    ? colors.buy
+                    : netPnl < 0
+                    ? colors.sell
+                    : undefined
+                }
+              />
+            </>
+          ) : (
+            <>
+              <InfoRow
+                label="Unrealized P&L"
+                value={formatSigned(unrealized)}
+                mono
+                tone={
+                  unrealized > 0
+                    ? colors.buy
+                    : unrealized < 0
+                    ? colors.sell
+                    : undefined
+                }
+              />
+              <InfoRow
+                label="Realized P&L"
+                value={formatSigned(realized)}
+                mono
+                tone={
+                  realized > 0
+                    ? colors.buy
+                    : realized < 0
+                    ? colors.sell
+                    : undefined
+                }
+              />
+              <InfoRow
+                label="Brokerage / charges"
+                value={charges > 0 ? `−${formatINR(charges)}` : "—"}
+                mono
+                tone={charges > 0 ? colors.sell : undefined}
+              />
+            </>
+          )}
+          {/* Margin used: only show when there's something actually
+              locked. Closed positions release margin to 0, where this
+              row used to render as a stray "—" that the user flagged. */}
+          {margin > 0 ? (
+            <InfoRow label="Margin used" value={formatINR(margin)} mono />
           ) : null}
-          <InfoRow
-            label="Total charges"
-            value={charges > 0 ? formatINR(charges) : "—"}
-            mono
-          />
-          <InfoRow
-            label="Margin used"
-            value={margin > 0 ? formatINR(margin) : "—"}
-            mono
-          />
         </Card>
 
         {/* SL / TP ──────────────────────────────────────────────── */}
