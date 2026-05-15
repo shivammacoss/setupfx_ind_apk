@@ -88,7 +88,7 @@ export function WatchlistScreen() {
               ltp={item.ltp}
               change={item.change}
               changePct={item.changePct}
-              onPress={() => router.push(`/trade/${item.symbol}`)}
+              onPress={() => router.push({ pathname: "/(tabs)/trade", params: { token: item.symbol } })}
             />
           )}
         />

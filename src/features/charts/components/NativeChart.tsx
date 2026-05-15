@@ -1,7 +1,7 @@
 import { memo, useEffect, useMemo, useRef } from "react";
 import { ActivityIndicator, StyleSheet, View } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { api } from "@core/api/client";
 import { unwrap } from "@core/api/errors";
 import { colors } from "@shared/theme";
@@ -9,6 +9,7 @@ import { Text } from "@shared/ui/Text";
 import { useThemeStore } from "@shared/store/theme.store";
 import { useTickerStore } from "@features/trade/store/ticker.store";
 import { marketdata } from "@features/trade/services/marketdata.service";
+import { daysForInterval } from "@features/charts/hooks/useHistory";
 
 // Lightweight Charts (https://github.com/tradingview/lightweight-charts) is
 // TradingView's free, open-source, MIT-licensed charting library — ~35KB
@@ -79,8 +80,15 @@ function useHistory(token: string, interval: ChartInterval) {
     queryKey: ["history", token, interval],
     queryFn: async () => {
       const rows = await unwrap<BackendCandle[]>(
+        // Lookback window scales with the interval — 5m wants ~3 weeks of
+        // context, 1D wants ~2 years. Previously hardcoded `days: 5` so
+        // daily-interval charts had only 5 candles and 5m charts on fresh
+        // option contracts came back nearly empty.
         api.get(`/user/instruments/${encodeURIComponent(token)}/history`, {
-          params: { interval: toApiInterval(interval), days: 5 },
+          params: {
+            interval: toApiInterval(interval),
+            days: daysForInterval(interval),
+          },
         }),
       );
       return rows
@@ -97,6 +105,10 @@ function useHistory(token: string, interval: ChartInterval) {
     enabled: !!token,
     staleTime: 30_000,
     retry: 1,
+    // Keep the previous interval's candles visible while a new interval
+    // fetch is in flight — eliminates the "blank chart for a beat" the
+    // user saw on every timeframe tap.
+    placeholderData: keepPreviousData,
   });
 }
 

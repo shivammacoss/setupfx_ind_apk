@@ -12,7 +12,9 @@ import { useUiStore } from "@shared/store/ui.store";
 
 export default function SecurityScreen() {
   const bioEnabled = usePinStore((s) => s.biometricEnabled);
+  const hasPin = usePinStore((s) => s.hasPin);
   const setBio = usePinStore((s) => s.setBiometricEnabled);
+  const clearPin = usePinStore((s) => s.clearPin);
   const { supported, prompt } = useBiometric();
   const pushToast = useUiStore((s) => s.pushToast);
 
@@ -21,11 +23,43 @@ export default function SecurityScreen() {
       pushToast({ kind: "warn", message: "Biometric not available on this device" });
       return;
     }
+    if (next && !hasPin) {
+      // Biometric without a PIN fallback is risky — if the fingerprint
+      // sensor stops recognising the user (wet finger, broken sensor)
+      // they'd be locked out with no recovery on this device. Require
+      // a PIN first.
+      pushToast({
+        kind: "warn",
+        message: "Set a PIN first — biometric uses it as fallback.",
+      });
+      return;
+    }
     if (next) {
       const ok = await prompt("Enable biometric login");
       if (!ok) return;
     }
     setBio(next);
+  }
+
+  function confirmRemovePin() {
+    Alert.alert(
+      "Remove PIN?",
+      "Turning off the PIN will also disable biometric login. You'll go straight to the app on launch.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Remove",
+          style: "destructive",
+          onPress: async () => {
+            await clearPin();
+            pushToast({
+              kind: "success",
+              message: "PIN lock disabled",
+            });
+          },
+        },
+      ],
+    );
   }
 
   function confirmFreeze() {
@@ -64,14 +98,34 @@ export default function SecurityScreen() {
             subtitle={supported ? "Unlock with Face ID / fingerprint" : "Not available on this device"}
             chevron={false}
             divider
-            rightNode={<Toggle value={bioEnabled} onChange={toggleBio} disabled={!supported} />}
+            rightNode={
+              <Toggle
+                value={bioEnabled}
+                onChange={toggleBio}
+                disabled={!supported || !hasPin}
+              />
+            }
           />
           <Row
             icon="keypad-outline"
-            title="Change PIN"
+            title={hasPin ? "Change PIN" : "Set up PIN"}
+            subtitle={
+              hasPin
+                ? "Tap to set a new 4-digit PIN"
+                : "Add a PIN lock to secure the app"
+            }
             divider
             onPress={() => router.push("/(auth)/pin-set")}
           />
+          {hasPin ? (
+            <Row
+              icon="lock-open-outline"
+              title="Remove PIN"
+              subtitle="Turn off PIN + biometric lock"
+              divider
+              onPress={confirmRemovePin}
+            />
+          ) : null}
           <Row
             icon="lock-closed-outline"
             title="Login sessions"

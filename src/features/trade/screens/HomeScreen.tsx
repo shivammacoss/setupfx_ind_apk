@@ -11,6 +11,7 @@ import { IndicesStrip, type IndexQuote } from "@features/trade/components/Indice
 import { IntradayChartCard } from "@features/trade/components/IntradayChartCard";
 import { MarketOverview } from "@features/trade/components/MarketOverview";
 import { MarketNews } from "@features/trade/components/MarketNews";
+import { InstrumentSearchOverlay } from "@features/trade/components/InstrumentSearchOverlay";
 import { useTickers } from "@features/trade/hooks/useTickers";
 import { useTickerStore } from "@features/trade/store/ticker.store";
 
@@ -46,6 +47,11 @@ const SEGMENT_TOKENS: Record<SegmentTab, SegmentEntry[]> = {
 
 export function HomeScreen() {
   const [tab, setTab] = useState<SegmentTab>("Stocks");
+  // Inline instrument-search modal — replaces the old router.push("/search")
+  // that navigated away from Home. Same backend search logic the Market
+  // page uses, just packaged as an overlay so the Home content stays
+  // visible underneath.
+  const [searchOpen, setSearchOpen] = useState(false);
   const entries = SEGMENT_TOKENS[tab];
   const tokens = useMemo(() => entries.map((e) => e.token), [entries]);
   const ticks = useTickers(tokens);
@@ -81,7 +87,14 @@ export function HomeScreen() {
 
   return (
     <Screen>
-      <TopBar hasProfileBadge />
+      <TopBar
+        hasProfileBadge
+        onSearch={() => setSearchOpen(true)}
+      />
+      <InstrumentSearchOverlay
+        visible={searchOpen}
+        onClose={() => setSearchOpen(false)}
+      />
       <SegmentTabs active={tab} onChange={setTab} />
       <ScrollView
         showsVerticalScrollIndicator={false}

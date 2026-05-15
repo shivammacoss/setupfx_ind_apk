@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import { FlatList, Pressable, RefreshControl, View } from "react-native";
+import { FlatList, Pressable, RefreshControl, TextInput, View } from "react-native";
 import { router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { Screen } from "@shared/components/Screen";
@@ -22,6 +22,7 @@ import {
   useUpdatePositionSlTp,
 } from "@features/portfolio/hooks/usePositions";
 import { SlTpEditor } from "@features/portfolio/components/SlTpEditor";
+import { PositionTradeSheet } from "@features/portfolio/components/PositionTradeSheet";
 import { useWalletSummary } from "@features/wallet/hooks/useWallet";
 import {
   TotalPnLCard,
@@ -82,6 +83,28 @@ function posToRow(p: Position): PositionRowData {
       : p.quantity > 0
       ? "BUY"
       : "SELL";
+  // Lot count = absolute contracts / lot_size. Prefer the backend's
+  // `lots` field when present (server already does this division and
+  // carries the canonical lot table for index F&O), fall back to a
+  // local divide for older rows that pre-date the field.
+  const lotSize = Number(p.lot_size ?? 0) || 0;
+  const lotsFromQty = lotSize > 0 ? Math.abs(p.quantity) / lotSize : null;
+  const lotsCount = (p.lots ?? lotsFromQty) ?? undefined;
+
+  // P&L: for OPEN rows show ONLY `unrealized_pnl` (matches what the
+  // Active tab shows + what the user expects as "current floating P&L").
+  // Adding realized double-counted the locked-in profit from any prior
+  // partial close — e.g. a 4-lot GOLD with 1 lot already closed showed
+  // 4 lots' worth of P&L on the 3 remaining (realized + unrealized for
+  // 3 lots = unrealized for 4 lots numerically).
+  //
+  // For CLOSED rows `unrealized_pnl` is 0 by definition so we use
+  // `realized_pnl` which is the final settled P&L for that position's
+  // entire life.
+  const pnlValue = isClosed
+    ? Number(p.realized_pnl)
+    : Number(p.unrealized_pnl);
+
   return {
     id: p.id,
     instrument_token: p.instrument_token,
@@ -89,9 +112,10 @@ function posToRow(p: Position): PositionRowData {
     exchange: p.exchange,
     side,
     quantity: Math.abs(p.quantity),
+    lots: lotsCount != null ? Number(lotsCount) : undefined,
     entry_price: Number(p.avg_price),
     ltp: Number(p.ltp),
-    pnl: Number(p.unrealized_pnl) + Number(p.realized_pnl),
+    pnl: pnlValue,
     status: p.status,
     timestamp: isClosed
       ? p.closed_at ?? p.opened_at ?? null
@@ -113,6 +137,7 @@ function tradeToRow(t: ActiveTrade): PositionRowData {
     exchange: t.exchange,
     side: t.action,
     quantity: t.quantity,
+    lots: t.lots,
     entry_price: Number(t.price),
     ltp: Number(t.ltp),
     pnl: Number(t.pnl),
@@ -129,6 +154,13 @@ function tradeToRow(t: ActiveTrade): PositionRowData {
 export function PortfolioScreen() {
   const [tab, setTab] = useState<TabKey>("position");
   const [sideFilter, setSideFilter] = useState<SideFilter>("all");
+  // In-tab local search — filters the CURRENT tab's rows by symbol /
+  // exchange. Previously the magnifier icon routed to the global stock
+  // search (`/search`) which the user found confusing — they wanted
+  // to find their own POSITIONS, not browse instruments. Now it stays
+  // on the Portfolio page and just narrows whatever tab is open.
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
 
   const wallet = useWalletSummary();
   const pnl = usePnLSummary();
@@ -146,6 +178,28 @@ export function PortfolioScreen() {
   const onEditSlTp = useCallback((r: PositionRowData) => {
     setSlTpEditing(r);
   }, []);
+
+  // Floating trade sheet for tapped Position rows. We store ONLY the id,
+  // then derive the live row from `rowsForTab` below. Storing the whole
+  // snapshot meant the sheet showed the row's value at TAP TIME and never
+  // updated when the user placed another order from inside the sheet —
+  // that's the "buy karne ke baad update slow" symptom. With an id +
+  // live lookup, the sheet's header qty/lots/P&L tick whenever the
+  // underlying cache changes (optimistic insert from usePlaceOrder, WS
+  // push from UserEventsProvider, REST refetch). null = sheet closed.
+  const [tradeForId, setTradeForId] = useState<string | null>(null);
+  const onRowTap = useCallback(
+    (r: PositionRowData) => {
+      if (r.status === "OPEN" && r.instrument_token) {
+        setTradeForId(r.id);
+      } else if (r.instrument_token) {
+        // CLOSED row → open the chart for that instrument so the user
+        // can review the price action that led to the close.
+        router.push({ pathname: "/(tabs)/trade", params: { token: r.instrument_token } });
+      }
+    },
+    [],
+  );
   const onSaveSlTp = useCallback(
     (input: { stop_loss: number | null; target: number | null }) => {
       const r = slTpEditing;
@@ -178,13 +232,34 @@ export function PortfolioScreen() {
         : tab === "closed"
         ? closedRows.map(posToRow)
         : activeRows.map(tradeToRow);
-    if (sideFilter === "all") return base;
-    return base.filter((r) => matchesFilter(r, sideFilter));
-  }, [tab, sideFilter, openRows, closedRows, activeRows]);
+    let filtered = sideFilter === "all"
+      ? base
+      : base.filter((r) => matchesFilter(r, sideFilter));
+    // Local symbol/exchange search — narrows the current tab's rows
+    // only. Doesn't fetch new stocks or open a global picker.
+    const q = searchQuery.trim().toUpperCase();
+    if (q.length > 0) {
+      filtered = filtered.filter((r) => {
+        const sym = (r.symbol ?? "").toUpperCase();
+        const exch = (r.exchange ?? "").toUpperCase();
+        return sym.includes(q) || exch.includes(q);
+      });
+    }
+    return filtered;
+  }, [tab, sideFilter, openRows, closedRows, activeRows, searchQuery]);
 
   const totalPnL = useMemo(
     () => rowsForTab.reduce((sum, r) => sum + r.pnl, 0),
     [rowsForTab],
+  );
+
+  // Look up the live row for the sheet (qty / lots / P&L all reflect
+  // the latest React-Query cache). If the position was fully closed
+  // while the sheet was open, the lookup returns undefined and the
+  // sheet auto-closes via the null prop.
+  const tradeForRow = useMemo(
+    () => (tradeForId ? rowsForTab.find((r) => r.id === tradeForId) ?? null : null),
+    [tradeForId, rowsForTab],
   );
 
   // Tab order per user request: Position → Active → Closed
@@ -302,19 +377,31 @@ export function PortfolioScreen() {
                 ) : null}
                 <Pressable
                   hitSlop={6}
-                  onPress={() => router.push("/search")}
+                  onPress={() => {
+                    // Toggle the in-tab search bar. Closing clears the
+                    // query so the next open starts fresh (and the rows
+                    // aren't silently filtered after the bar is gone).
+                    setSearchOpen((v) => {
+                      if (v) setSearchQuery("");
+                      return !v;
+                    });
+                  }}
                   style={{
                     width: 34,
                     height: 34,
                     borderRadius: 17,
-                    backgroundColor: colors.bgElevated,
+                    backgroundColor: searchOpen ? colors.primaryDim : colors.bgElevated,
                     alignItems: "center",
                     justifyContent: "center",
                     borderWidth: 1,
-                    borderColor: colors.border,
+                    borderColor: searchOpen ? colors.primary : colors.border,
                   }}
                 >
-                  <Ionicons name="search" size={16} color={colors.text} />
+                  <Ionicons
+                    name={searchOpen ? "close" : "search"}
+                    size={16}
+                    color={searchOpen ? colors.primary : colors.text}
+                  />
                 </Pressable>
               </View>
             </View>
@@ -331,6 +418,60 @@ export function PortfolioScreen() {
                 variant="underline"
               />
             </View>
+            {/* Inline search bar — only mounts when user taps the
+                magnifier. Filters CURRENT tab's positions only; doesn't
+                fetch / browse new stocks. */}
+            {searchOpen ? (
+              <View
+                style={{
+                  paddingHorizontal: spacing.lg,
+                  paddingBottom: spacing.sm,
+                }}
+              >
+                <View
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: 8,
+                    paddingHorizontal: 12,
+                    paddingVertical: 8,
+                    borderRadius: 999,
+                    backgroundColor: colors.bgElevated,
+                    borderWidth: 1,
+                    borderColor: colors.border,
+                  }}
+                >
+                  <Ionicons name="search" size={14} color={colors.textMuted} />
+                  <TextInput
+                    value={searchQuery}
+                    onChangeText={setSearchQuery}
+                    placeholder="Search your positions (symbol / exchange)"
+                    placeholderTextColor={colors.textDim}
+                    autoFocus
+                    autoCapitalize="characters"
+                    autoCorrect={false}
+                    style={{
+                      flex: 1,
+                      fontSize: 13,
+                      color: colors.text,
+                      padding: 0,
+                    }}
+                  />
+                  {searchQuery.length > 0 ? (
+                    <Pressable
+                      onPress={() => setSearchQuery("")}
+                      hitSlop={8}
+                    >
+                      <Ionicons
+                        name="close-circle"
+                        size={16}
+                        color={colors.textMuted}
+                      />
+                    </Pressable>
+                  ) : null}
+                </View>
+              </View>
+            ) : null}
             {/* Side filter — works on every tab. SL/TP filter is only
                 meaningful on tabs that carry bracket-leg metadata
                 (Position + Active), but we leave it visible on Closed
@@ -404,6 +545,7 @@ export function PortfolioScreen() {
         renderItem={({ item }) => (
           <PositionRowV2
             row={item}
+            onPress={() => onRowTap(item)}
             onClose={() => onCloseRow(item)}
             onEditSlTp={
               tab === "closed" ? undefined : () => onEditSlTp(item)
@@ -418,6 +560,28 @@ export function PortfolioScreen() {
             }
           />
         )}
+      />
+      {/* Floating trade panel — pops up on row tap. Sits on top of the
+          list so the position card behind stays at its normal size.
+          `position` is derived from rowsForTab so qty/lots/P&L stay
+          live as the underlying cache updates (optimistic top-up,
+          WS push, REST refetch). */}
+      <PositionTradeSheet
+        position={tradeForRow}
+        onClose={() => setTradeForId(null)}
+        onExitPosition={() => {
+          if (tradeForRow) {
+            onCloseRow(tradeForRow);
+            setTradeForId(null);
+          }
+        }}
+        closing={
+          tradeForRow != null &&
+          ((tab === "active" &&
+            closeTrade.isPending &&
+            closeTrade.variables === tradeForRow.id) ||
+            (squareoff.isPending && squareoff.variables?.id === tradeForRow.id))
+        }
       />
       {/* SL / TP bottom-sheet — shown for both Position + Active rows */}
       <SlTpEditor

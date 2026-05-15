@@ -10,9 +10,10 @@ export default function TabsLayout() {
   // On Xiaomi / HyperOS phones with gesture navigation, `insets.bottom`
   // often reports 0 even though a system gesture indicator is still
   // drawn at the bottom of the screen — that indicator visually covers
-  // the tab labels. Enforcing a minimum bottom gap (16 dp Android,
-  // 12 dp iOS) keeps the labels above the gesture bar on every device.
-  const minBottom = Platform.OS === "android" ? 16 : 12;
+  // the tab labels. Enforcing a minimum bottom gap (10 dp Android,
+  // 8 dp iOS) keeps the labels above the gesture bar on every device.
+  // Lowered from 16/12 → 10/8 along with the bar height reduction below.
+  const minBottom = Platform.OS === "android" ? 10 : 8;
   const bottomInset = Math.max(insets.bottom, minBottom);
 
   return (
@@ -25,19 +26,23 @@ export default function TabsLayout() {
           backgroundColor: colors.bg,
           borderTopColor: colors.border,
           borderTopWidth: 1,
-          height: 60 + bottomInset,
-          paddingTop: 6,
+          // Trimmed bar from 60 → 48 dp + tighter top padding so the bar
+          // doesn't dominate the screen on small phones. Total bar height
+          // becomes 48 + insets.bottom (typically ~12-20 dp on modern
+          // Android with gesture nav), matching Zerodha / Groww proportions.
+          height: 48 + bottomInset,
+          paddingTop: 4,
           paddingBottom: bottomInset,
         },
         tabBarItemStyle: {
-          paddingVertical: 4,
+          paddingVertical: 2,
         },
         tabBarActiveTintColor: colors.text,
         tabBarInactiveTintColor: colors.textMuted,
         tabBarLabelStyle: {
-          fontSize: 10.5,
+          fontSize: 10,
           fontWeight: "500",
-          marginTop: 2,
+          marginTop: 1,
         },
         tabBarIconStyle: {
           marginTop: 0,

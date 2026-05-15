@@ -1,10 +1,9 @@
-import { memo, useState } from "react";
+import { memo } from "react";
 import { Pressable, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, radii, spacing } from "@shared/theme";
 import { Text } from "@shared/ui/Text";
 import { formatINR, formatNumber } from "@shared/utils/format";
-import { InlineTradePanel } from "@features/portfolio/components/InlineTradePanel";
 
 export interface PositionRowData {
   id: string;
@@ -13,6 +12,13 @@ export interface PositionRowData {
   exchange?: string;
   side: "BUY" | "SELL";
   quantity: number;
+  /**
+   * Lot count derived from `Math.abs(position.quantity) / lot_size`. Shown
+   * alongside the qty pill (e.g. "2L · 130") so the user sees both the
+   * exchange-side contract count AND the admin-configured lot count in
+   * one glance.
+   */
+  lots?: number;
   entry_price: number;
   ltp: number;
   pnl: number;
@@ -28,6 +34,14 @@ export interface PositionRowData {
 
 interface Props {
   row: PositionRowData;
+  /**
+   * Called when the user taps the card. The parent screen decides what
+   * to do — typically opens the floating trade sheet for OPEN rows or
+   * navigates to the chart for CLOSED rows. Replaces the old inline
+   * expansion which lived on the row itself (the user reported the
+   * expand-in-place feel as crowded; trade sheet pops on top of the
+   * row instead).
+   */
   onPress?: () => void;
   onClose?: () => void;
   closing?: boolean;
@@ -63,11 +77,6 @@ function fmtTime(iso: string | null | undefined): string {
 }
 
 function PositionRowV2Impl({ row, onPress, onClose, closing, onEditSlTp }: Props) {
-  // Tap-to-expand: shows the inline trade panel (BUY/SELL more lots,
-  // change Market↔Limit, see live bid/ask + high/low/open, exit the
-  // position in one tap). Closed positions stay collapsed because there
-  // is nothing to trade on top of them.
-  const [expanded, setExpanded] = useState(false);
   const isBuy = row.side === "BUY";
   const isUsd = row.currency_quote === "USD";
   const isOpen = row.status === "OPEN";
@@ -87,22 +96,13 @@ function PositionRowV2Impl({ row, onPress, onClose, closing, onEditSlTp }: Props
 
   return (
     <Pressable
-      onPress={() => {
-        // Tap toggles the inline trade panel for OPEN positions. CLOSED
-        // rows fall through to the parent's onPress (used for the
-        // "tap row → open chart" navigation on the Closed tab).
-        if (isOpen) {
-          setExpanded((v) => !v);
-        } else {
-          onPress?.();
-        }
-      }}
+      onPress={onPress}
       style={{
         flexDirection: "row",
         marginHorizontal: spacing.lg,
         borderRadius: radii.lg,
         borderWidth: 1,
-        borderColor: expanded ? colors.primary : colors.border,
+        borderColor: colors.border,
         backgroundColor: colors.bgElevated,
         overflow: "hidden",
       }}
@@ -174,7 +174,12 @@ function PositionRowV2Impl({ row, onPress, onClose, closing, onEditSlTp }: Props
                   color: colors.textMuted,
                 }}
               >
-                ×{row.quantity}
+                {/* Show "2L · 130" when lots is available, else just qty.
+                    Strip trailing zeros so e.g. 1.0 → "1L", 0.5 → "0.5L"
+                    for fractional-lot instruments (crypto/forex). */}
+                {row.lots != null && row.lots > 0
+                  ? `${(+row.lots.toFixed(2)).toString()}L · ${row.quantity}`
+                  : `×${row.quantity}`}
               </Text>
             </View>
           </View>
@@ -366,22 +371,6 @@ function PositionRowV2Impl({ row, onPress, onClose, closing, onEditSlTp }: Props
           </View>
         ) : null}
 
-        {/* ── Inline trade panel — only on OPEN rows when user taps the
-            card. Tapping again collapses. The panel hosts live bid/ask,
-            High/Low/Open/Last-trade-time, admin lot caps, Market/Limit
-            toggle, lot input + BUY/SELL action buttons + Exit Qty —
-            i.e. the user can top up the position OR exit it without
-            navigating away from the Portfolio tab. */}
-        {isOpen && expanded && row.instrument_token ? (
-          <InlineTradePanel
-            token={row.instrument_token}
-            symbol={row.symbol}
-            positionQty={row.quantity}
-            positionSide={row.side}
-            onExit={() => onClose?.()}
-            closing={closing}
-          />
-        ) : null}
       </View>
     </Pressable>
   );

@@ -15,6 +15,18 @@ interface ThemeState {
   mode: ThemeMode;
   resolved: "dark" | "light";
   hydrated: boolean;
+  /**
+   * Monotonic counter bumped on every EXPLICIT user theme switch and on
+   * every Appearance change after hydration. Screens key off this so a
+   * theme flip force-remounts the screen tree and every component re-
+   * reads `colors.*` from the freshly-mutated palette. Without this,
+   * components that captured `colors.bg` at module-load time (or in a
+   * useMemo with no theme dep) keep painting the OLD palette — that's
+   * the "Light mode set kiya but pages dark hi rendering kar rhe" bug.
+   * Stays at 0 during the initial hydrate so cold boot doesn't trigger
+   * a spurious remount.
+   */
+  themeNonce: number;
   setMode: (mode: ThemeMode) => void;
   hydrate: () => void;
 }
@@ -35,12 +47,15 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
   mode: "dark",
   resolved: "dark",
   hydrated: false,
+  themeNonce: 0,
 
   setMode: (mode) => {
     const resolved = resolveMode(mode);
     applyPalette(paletteFor(resolved));
     mmkv.setString(STORAGE_KEYS.theme, mode);
-    set({ mode, resolved });
+    // Bump the nonce so screen-tree subscribers force-remount and
+    // re-read the freshly-mutated `colors` singleton.
+    set({ mode, resolved, themeNonce: get().themeNonce + 1 });
   },
 
   hydrate: () => {
@@ -49,6 +64,9 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
     const mode: ThemeMode = stored === "light" || stored === "system" ? stored : "dark";
     const resolved = resolveMode(mode);
     applyPalette(paletteFor(resolved));
+    // DO NOT bump themeNonce on hydrate — cold boot painting matches
+    // the resolved palette by definition, and bumping here would
+    // remount the screen tree on every app launch.
     set({ mode, resolved, hydrated: true });
   },
 }));
@@ -63,5 +81,7 @@ Appearance.addChangeListener(() => {
   // login screen. Only mutate when the value flips.
   if (resolved === s.resolved) return;
   applyPalette(paletteFor(resolved));
-  useThemeStore.setState({ resolved });
+  // OS auto-theme flip → bump nonce so screens repaint with the new
+  // palette. Only fires when `resolved` actually changed (guard above).
+  useThemeStore.setState({ resolved, themeNonce: s.themeNonce + 1 });
 });

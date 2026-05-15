@@ -22,7 +22,13 @@ export default function PinSetScreen() {
   const setCurrent = stage === "enter" ? setPin : setConfirm;
 
   useEffect(() => {
-    const t = setTimeout(() => inputRef.current?.focus(), 200);
+    // After the stage flips from "enter" → "confirm" we need to bring
+    // the keyboard back. The TextInput is keyed on `stage` (see the
+    // `key={stage}` below) so it FULLY REMOUNTS on transition — that
+    // re-fires `autoFocus` and brings the soft keyboard up cleanly.
+    // The setTimeout is the belt-and-suspenders for emulators where
+    // autoFocus races the mount commit.
+    const t = setTimeout(() => inputRef.current?.focus(), 80);
     return () => clearTimeout(t);
   }, [stage]);
 
@@ -62,12 +68,47 @@ export default function PinSetScreen() {
         </View>
         <PinDots length={PIN_LENGTH} filled={current.length} cursorAt={current.length} />
         <TextInput
+          // Key on `stage` so this TextInput is a fresh instance on the
+          // "enter" → "confirm" transition. Without the key the same
+          // mounted input retained its blur state from when we cleared
+          // it and `autoFocus` would NOT re-fire (it only runs on
+          // mount). Result: user saw the "Re-enter PIN" header with
+          // dots + blinking cursor but no soft keyboard would appear
+          // and they couldn't type — the bug shown in the screenshot.
+          key={stage}
           ref={inputRef}
           value={current}
-          onChangeText={(v) => setCurrent(v.replace(/\D/g, "").slice(0, PIN_LENGTH))}
+          onChangeText={(v) => {
+            const cleaned = v.replace(/\D/g, "").slice(0, PIN_LENGTH);
+            setCurrent(cleaned);
+            // AUTO-ADVANCE the moment the user fills the 4th dot —
+            // most users expected the form to move forward by itself
+            // (Zerodha, GPay, every banking app does this). The old
+            // flow required tapping a still-enabled "Continue" button
+            // which the user thought was broken when they'd only
+            // entered 3 digits but the button looked tappable.
+            //   • stage="enter" + length=4 → flip to "confirm"
+            //   • stage="confirm" + length=4 → run validation/save
+            // Tiny setTimeout lets the dot fill animate one frame
+            // before the stage transition (otherwise the user sees
+            // an instant title change without seeing the 4th dot).
+            if (cleaned.length === PIN_LENGTH) {
+              setTimeout(() => {
+                if (stage === "enter") {
+                  setStage("confirm");
+                } else {
+                  void next();
+                }
+              }, 80);
+            }
+          }}
           keyboardType="number-pad"
           autoFocus
           caretHidden
+          // `showSoftInputOnFocus` defaults to true; making it explicit
+          // documents intent (some emulators / device skins flip the
+          // default off if a global accessibility flag is set).
+          showSoftInputOnFocus
           style={{ position: "absolute", opacity: 0, height: 1, width: 1 }}
         />
       </Pressable>

@@ -33,7 +33,7 @@ function IndicesStripImpl({ data }: Props) {
             ltp={it.ltp}
             change={it.change}
             changePct={it.changePct}
-            onPress={() => router.push(`/trade/${encodeURIComponent(it.token)}`)}
+            onPress={() => router.push({ pathname: "/(tabs)/trade", params: { token: it.token } })}
           />
         ))}
       </ScrollView>

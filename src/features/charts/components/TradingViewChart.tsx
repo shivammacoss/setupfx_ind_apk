@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, View } from "react-native";
+import { ActivityIndicator, StyleSheet, View } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import { colors } from "@shared/theme";
 import { Text } from "@shared/ui/Text";
@@ -23,21 +23,13 @@ import { useHistory, type ChartInterval } from "@features/charts/hooks/useHistor
 export interface TradingViewChartProps {
   token: string;
   symbol?: string;
-  initialInterval?: ChartInterval;
   /**
-   * Fires whenever the user taps a new interval in the bottom bar.
-   * Lets the screen-level ChartInfoBar reflect the same interval label.
+   * Controlled chart interval — owned by ChartScreen so a single
+   * timeframe bar at the screen level drives both this WebView chart
+   * and the NativeChart used for derivatives.
    */
-  onIntervalChange?: (interval: ChartInterval) => void;
+  interval: ChartInterval;
 }
-
-const INTERVALS: { id: ChartInterval; label: string }[] = [
-  { id: "1", label: "1m" },
-  { id: "5", label: "5m" },
-  { id: "15", label: "15m" },
-  { id: "60", label: "1h" },
-  { id: "1D", label: "1D" },
-];
 
 function intervalSeconds(i: ChartInterval): number {
   switch (i) {
@@ -196,14 +188,12 @@ function applyTheme(t){
 function TradingViewChartImpl({
   token,
   symbol,
-  initialInterval = "5",
-  onIntervalChange,
+  interval,
 }: TradingViewChartProps) {
   const resolved = useThemeStore((s) => s.resolved);
   const theme: "light" | "dark" = resolved === "light" ? "light" : "dark";
 
   const webRef = useRef<WebView | null>(null);
-  const [interval, setInterval] = useState<ChartInterval>(initialInterval);
   const [webReady, setWebReady] = useState(false);
 
   // Build the HTML once per theme — switching interval/symbol just
@@ -301,38 +291,6 @@ function TradingViewChartImpl({
           </Text>
         </View>
       ) : null}
-
-      <View style={[styles.intervalBar, { backgroundColor: colors.bg, borderTopColor: colors.border }]}>
-        {INTERVALS.map((iv) => {
-          const active = iv.id === interval;
-          return (
-            <Pressable
-              key={iv.id}
-              onPress={() => {
-                setInterval(iv.id);
-                onIntervalChange?.(iv.id);
-              }}
-              hitSlop={6}
-              style={{
-                paddingHorizontal: 10,
-                paddingVertical: 5,
-                borderRadius: 6,
-                backgroundColor: active ? colors.bgElevated : "transparent",
-              }}
-            >
-              <Text
-                size="xs"
-                style={{
-                  color: active ? colors.primary : colors.textMuted,
-                  fontWeight: active ? "700" : "500",
-                }}
-              >
-                {iv.label}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </View>
     </View>
   );
 }
@@ -343,14 +301,6 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     alignItems: "center",
     justifyContent: "center",
-  },
-  intervalBar: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    paddingVertical: 8,
-    borderTopWidth: 1,
   },
 });
 

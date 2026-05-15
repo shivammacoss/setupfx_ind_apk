@@ -236,6 +236,46 @@ type WalletSummaryShape = {
   [k: string]: unknown;
 };
 
+/**
+ * Scale every qty-dependent field on a Position down proportionally
+ * when a partial close happens. Without this, `unrealized_pnl`, `lots`,
+ * and `margin_used` keep their pre-close (full-quantity) values while
+ * `quantity` shrinks — so the position card shows "1 lot · −₹1706 P&L"
+ * when it should be "1 lot · −₹853 P&L". Used by both the active-trade
+ * close path and the position partial-squareoff path. The next REST/WS
+ * refetch overwrites these with the backend's authoritative numbers
+ * within ~3 s; this only governs the optimistic render in between.
+ */
+function scalePartialClose(
+  prev: Position,
+  newSignedQty: number,
+): Position {
+  const prevAbs = Math.abs(prev.quantity ?? 0);
+  const nextAbs = Math.abs(newSignedQty);
+  const scale = prevAbs > 0 ? nextAbs / prevAbs : 1;
+  const scaleStr = (v: unknown): string | undefined => {
+    if (v == null) return undefined;
+    const n = Number(v);
+    if (!Number.isFinite(n)) return undefined;
+    return String(n * scale);
+  };
+  const nextLots =
+    prev.lots != null && Number.isFinite(Number(prev.lots))
+      ? Number(prev.lots) * scale
+      : prev.lots;
+  const scaledUnrealized = scaleStr(prev.unrealized_pnl);
+  const scaledMargin = scaleStr(prev.margin_used);
+  return {
+    ...prev,
+    quantity: newSignedQty,
+    lots: nextLots,
+    ...(scaledUnrealized !== undefined
+      ? { unrealized_pnl: scaledUnrealized }
+      : {}),
+    ...(scaledMargin !== undefined ? { margin_used: scaledMargin } : {}),
+  };
+}
+
 function releaseMarginOptimistically(
   qc: QueryClient,
   positions: Position[],
@@ -306,7 +346,11 @@ export function useCloseActiveTrade() {
               const reducedQty = (closingTrade.quantity || 0) * direction;
               const next = (p.quantity ?? 0) - reducedQty;
               if (Math.abs(next) < 1e-9) return null;
-              return { ...p, quantity: next };
+              // Scale unrealized_pnl / lots / margin_used to match the
+              // new partial quantity. See scalePartialClose for the
+              // "active trade close me dono lot ka P&L dikh rha" bug
+              // this prevents.
+              return scalePartialClose(p, next);
             })
             .filter((p): p is Position => p != null);
         });
@@ -489,9 +533,15 @@ export function useSquareoffPosition() {
         return prev
           .map((p) => {
             if (p.id !== id) return p;
-            const remaining = Math.max(0, (p.quantity ?? 0) - lots);
-            if (remaining <= 0) return null;
-            return { ...p, quantity: remaining };
+            const direction = Math.sign(p.quantity || 0) || 1;
+            const signedReduction = lots * direction;
+            const remaining = (p.quantity ?? 0) - signedReduction;
+            if (Math.abs(remaining) < 1e-9) return null;
+            // Same proportional-scaling fix as useCloseActiveTrade: the
+            // old patch only updated `quantity`, so a partial-close
+            // would leave `unrealized_pnl` / `lots` / `margin_used`
+            // sitting at full-position values until the next REST poll.
+            return scalePartialClose(p, remaining);
           })
           .filter((p): p is Position => p != null);
       });

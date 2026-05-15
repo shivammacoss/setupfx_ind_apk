@@ -210,10 +210,44 @@ export function usePlaceOrder() {
         if (matchIdx >= 0) {
           const next = existing.slice();
           const cur = existing[matchIdx]!;
+          // Compute the CONTRACT increment correctly: for Indian
+          // equity / index F&O / MCX, one lot adds lot_size contracts
+          // (e.g. GOLD lot_size=100 → 1 lot adds 100 to quantity).
+          // Previously we added `body.lots` directly to quantity, so
+          // a 1-lot GOLD top-up moved quantity from 300 → 301 instead
+          // of 300 → 400 — that's the "lot/qty bahut slow update ho
+          // raha hai" symptom (qty looked frozen until WS refetched).
+          // Lot size is taken from the existing position's stored
+          // lot_size; falls back to 1 (correct for forex/crypto where
+          // lots ARE the contract count).
+          const curLotSize = Number(cur.lot_size ?? 0) || 1;
+          const contractIncrement = body.lots * curLotSize * dirSign;
+          const nextQuantity = (cur.quantity ?? 0) + contractIncrement;
+          const nextLotsRaw = (Number(cur.lots) || 0) + body.lots;
+          // Scale unrealized_pnl UP to match the new quantity. Without
+          // this, after a top-up the row showed (say) 3 lots' qty but
+          // still the 2 lots' P&L until the next REST poll landed.
+          const prevAbs = Math.abs(cur.quantity ?? 0);
+          const nextAbs = Math.abs(nextQuantity);
+          const scale = prevAbs > 0 ? nextAbs / prevAbs : 1;
+          const scaleStr = (v: unknown): string | undefined => {
+            if (v == null) return undefined;
+            const n = Number(v);
+            if (!Number.isFinite(n)) return undefined;
+            return String(n * scale);
+          };
+          const scaledUnrealized = scaleStr(cur.unrealized_pnl);
+          const scaledMargin = scaleStr(cur.margin_used);
           next[matchIdx] = {
             ...cur,
-            quantity: (cur.quantity ?? 0) + optPos.quantity,
-            lots: (cur.lots ?? 0) + (optPos.lots ?? 0),
+            quantity: nextQuantity,
+            lots: nextLotsRaw,
+            ...(scaledUnrealized !== undefined
+              ? { unrealized_pnl: scaledUnrealized }
+              : {}),
+            ...(scaledMargin !== undefined
+              ? { margin_used: scaledMargin }
+              : {}),
           };
           return next;
         }

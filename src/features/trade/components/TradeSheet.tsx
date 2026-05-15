@@ -239,7 +239,7 @@ export const TradeSheet = forwardRef<TradeSheetRef, TradeSheetProps>(({ initialA
     // dropped the push entirely when Gorhom's close animation was still
     // running, leaving the user stuck on the sheet with nothing
     // happening.
-    router.push(`/trade/${encodeURIComponent(target.token)}`);
+    router.push({ pathname: "/(tabs)/trade", params: { token: target.token } });
     sheet.current?.close();
   }
 

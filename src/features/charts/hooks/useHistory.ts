@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { env } from "@core/config/env";
 import { getAccessToken } from "@core/api/tokens";
 
@@ -20,13 +20,25 @@ const INTERVAL_TO_API: Record<ChartInterval, string> = {
   "1D": "day",
 };
 
+// Lookback window per interval — sized to give the user a comfortable
+// scroll buffer of *previous* candles (not just the few that fit on
+// screen). 5m was previously 5 days (≈375 NSE candles), which felt
+// empty on Forex / Crypto / fresh option contracts; widening to 15 days
+// gives ~3 weeks of intraday context. Backend `/history` caps the
+// `days` query at 365, so values are kept ≤ 365.
 const DAYS_FOR_INTERVAL: Record<ChartInterval, number> = {
-  "1": 2,
-  "5": 5,
-  "15": 10,
-  "60": 30,
+  "1": 7,
+  "5": 15,
+  "15": 30,
+  "60": 90,
   "1D": 365,
 };
+
+// Public export so other chart components (NativeChart) can use the
+// same lookback table instead of hardcoding `days: 5`.
+export function daysForInterval(interval: ChartInterval): number {
+  return DAYS_FOR_INTERVAL[interval];
+}
 
 interface BackendCandle {
   date?: string;
@@ -89,6 +101,11 @@ export function useHistory(token: string | null | undefined, interval: ChartInte
     enabled: !!token,
     staleTime: 60_000,
     gcTime: 5 * 60_000,
+    // Keep the previous interval's candles painted while the new
+    // interval is fetching — without this the chart blanks for a
+    // beat on every timeframe tap and the user thinks the button
+    // didn't work.
+    placeholderData: keepPreviousData,
   });
 }
 

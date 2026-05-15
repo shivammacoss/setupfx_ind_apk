@@ -153,7 +153,7 @@ function MarketRow({
   showDivider?: boolean;
 }) {
   return (
-    <Pressable onPress={() => router.push(`/trade/${encodeURIComponent(row.token)}`)}>
+    <Pressable onPress={() => router.push({ pathname: "/(tabs)/trade", params: { token: row.token } })}>
       <View
         style={{
           flexDirection: "row",

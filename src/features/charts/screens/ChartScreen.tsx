@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { FlatList, Pressable, View } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import * as Haptics from "expo-haptics";
 import { useQueryClient } from "@tanstack/react-query";
 import { Screen } from "@shared/components/Screen";
 import { Text } from "@shared/ui/Text";
@@ -10,6 +11,8 @@ import { goBack } from "@shared/utils/navigation";
 import { TradingViewChart } from "@features/charts/components/TradingViewChart";
 import { NativeChart } from "@features/charts/components/NativeChart";
 import { ChartInfoBar } from "@features/charts/components/ChartInfoBar";
+import type { ChartInterval } from "@features/charts/hooks/useHistory";
+import { InstrumentSearchOverlay } from "@features/trade/components/InstrumentSearchOverlay";
 import {
   isResolvableToken,
   toTradingViewSymbol,
@@ -109,11 +112,21 @@ export function ChartScreen() {
     // overwritten by a background settings refetch.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [effective.data]);
-  const [chartInterval, setChartInterval] = useState<"1" | "5" | "15" | "60" | "1D">("5");
+  // Single source of truth for the chart interval — both TradingViewChart
+  // (directly-resolvable tokens) and NativeChart (derivatives) read this
+  // controlled prop, so the timeframe bar below works regardless of which
+  // chart engine is mounted. Previously the bar lived inside
+  // TradingViewChart and didn't render at all on option / future contracts.
+  const [chartInterval, setChartInterval] = useState<ChartInterval>("5");
   // Bottom positions panel — collapsed by default so the chart gets full
   // vertical space. Chevron at the bottom toggles a 50/50 split between
   // the chart and the user's open positions (with live PnL + Close).
   const [panelOpen, setPanelOpen] = useState(false);
+  // Inline instrument-search modal — replaces the old `/search` route.
+  // Tap header magnifier → overlay slides up over the chart, user picks
+  // a symbol, taps a result → overlay closes + chart navigates to the
+  // new token. Same backend search logic as the Market page.
+  const [searchOpen, setSearchOpen] = useState(false);
   const qc = useQueryClient();
   const pushToast = useUiStore((s) => s.pushToast);
 
@@ -206,10 +219,15 @@ export function ChartScreen() {
             Options
           </Text>
         </Pressable>
-        <Pressable onPress={() => router.push("/search")} hitSlop={10}>
+        <Pressable onPress={() => setSearchOpen(true)} hitSlop={10}>
           <Ionicons name="search" size={20} color={colors.text} />
         </Pressable>
       </View>
+
+      <InstrumentSearchOverlay
+        visible={searchOpen}
+        onClose={() => setSearchOpen(false)}
+      />
 
       <BuySellBar
         token={token}
@@ -242,18 +260,21 @@ export function ChartScreen() {
         {isDerivative ? (
           <NativeChart
             token={token}
-            interval="5"
+            interval={chartInterval}
             displaySymbol={display}
           />
         ) : (
           <TradingViewChart
             token={token}
             symbol={display}
-            initialInterval="5"
-            onIntervalChange={setChartInterval}
+            interval={chartInterval}
           />
         )}
       </View>
+
+      {/* Screen-level timeframe bar — works for BOTH chart engines and
+          is the only source of truth for `chartInterval`. */}
+      <IntervalBar value={chartInterval} onChange={setChartInterval} />
 
       {/* Chevron toggle — splits the screen into chart + positions when
           tapped. Sits between chart and panel so it's always reachable. */}
@@ -271,6 +292,67 @@ export function ChartScreen() {
         </View>
       ) : null}
     </Screen>
+  );
+}
+
+const CHART_INTERVALS: { id: ChartInterval; label: string }[] = [
+  { id: "1", label: "1m" },
+  { id: "5", label: "5m" },
+  { id: "15", label: "15m" },
+  { id: "60", label: "1h" },
+  { id: "1D", label: "1D" },
+];
+
+function IntervalBar({
+  value,
+  onChange,
+}: {
+  value: ChartInterval;
+  onChange: (v: ChartInterval) => void;
+}) {
+  return (
+    <View
+      style={{
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 6,
+        paddingVertical: 8,
+        backgroundColor: colors.bg,
+        borderTopWidth: 1,
+        borderTopColor: colors.border,
+      }}
+    >
+      {CHART_INTERVALS.map((iv) => {
+        const active = iv.id === value;
+        return (
+          <Pressable
+            key={iv.id}
+            onPress={() => {
+              void Haptics.selectionAsync();
+              onChange(iv.id);
+            }}
+            hitSlop={6}
+            style={{
+              paddingHorizontal: 12,
+              paddingVertical: 5,
+              borderRadius: 6,
+              backgroundColor: active ? colors.bgElevated : "transparent",
+            }}
+          >
+            <Text
+              size="xs"
+              style={{
+                color: active ? colors.primary : colors.textMuted,
+                fontWeight: active ? "700" : "500",
+              }}
+            >
+              {iv.label}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </View>
   );
 }
 

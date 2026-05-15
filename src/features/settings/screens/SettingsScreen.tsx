@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from "react";
+import { type ReactNode } from "react";
 import { Alert, Pressable, ScrollView, View } from "react-native";
 import { router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
@@ -12,29 +12,21 @@ import { useAuthStore } from "@features/auth/store/auth.store";
 import { useBiometric } from "@shared/hooks/useBiometric";
 import { useUiStore } from "@shared/store/ui.store";
 import { useThemeStore } from "@shared/store/theme.store";
-import { LANGUAGES, useLanguageStore } from "@shared/store/language.store";
 import { useNetworkState } from "@shared/hooks/useNetworkState";
 
 const THEME_LABEL = { dark: "Dark", light: "Light", system: "System" } as const;
 
 export function SettingsScreen() {
   const bioEnabled = usePinStore((s) => s.biometricEnabled);
+  const hasPin = usePinStore((s) => s.hasPin);
   const setBio = usePinStore((s) => s.setBiometricEnabled);
+  const clearPin = usePinStore((s) => s.clearPin);
   const { supported, prompt } = useBiometric();
   const pushToast = useUiStore((s) => s.pushToast);
   const themeMode = useThemeStore((s) => s.mode);
-  const langCode = useLanguageStore((s) => s.code);
-  const langHydrated = useLanguageStore((s) => s.hydrated);
-  const hydrateLang = useLanguageStore((s) => s.hydrate);
   const signOut = useAuthStore((s) => s.signOut);
   const net = useNetworkState();
 
-  useEffect(() => {
-    if (!langHydrated) void hydrateLang();
-  }, [langHydrated, hydrateLang]);
-
-  const langLabel =
-    LANGUAGES.find((l) => l.code === langCode)?.label ?? "English";
   const netOk = net.isConnected && net.isInternetReachable !== false;
 
   async function toggleBio(next: boolean) {
@@ -42,6 +34,16 @@ export function SettingsScreen() {
       pushToast({
         kind: "warn",
         message: "Biometric not available on this device",
+      });
+      return;
+    }
+    if (next && !hasPin) {
+      // Biometric without a PIN fallback is a lock-out risk — if the
+      // sensor stops recognising the user (wet finger, broken sensor)
+      // they can't recover on this device. Force a PIN first.
+      pushToast({
+        kind: "warn",
+        message: "Set a PIN first — biometric uses it as fallback.",
       });
       return;
     }
@@ -54,6 +56,33 @@ export function SettingsScreen() {
       kind: "success",
       message: next ? "Biometric login enabled" : "Biometric login disabled",
     });
+  }
+
+  // PIN-lock toggle. When OFF and user flips ON → route to /pin-set so
+  // they set a 4-digit PIN; the screen flips hasPin=true on save and
+  // the toggle reflects on return. When ON and user flips OFF → confirm
+  // dialog → clearPin() wipes secure-store + auto-disables biometric.
+  function togglePin(next: boolean) {
+    if (next) {
+      // No PIN yet — open setup flow.
+      router.push("/(auth)/pin-set");
+      return;
+    }
+    Alert.alert(
+      "Remove PIN?",
+      "Turning off the PIN will also disable biometric login. You'll go straight to the app on launch.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Remove",
+          style: "destructive",
+          onPress: async () => {
+            await clearPin();
+            pushToast({ kind: "success", message: "PIN lock disabled" });
+          },
+        },
+      ],
+    );
   }
 
   function confirmLogout() {
@@ -89,28 +118,49 @@ export function SettingsScreen() {
           value={THEME_LABEL[themeMode]}
           onPress={() => router.push("/settings/theme")}
         />
+        {/* PIN-lock master toggle. OFF by default — flipping ON routes
+            to /pin-set; flipping OFF wipes the PIN + biometric. Replaces
+            the previous "Change PIN" row that just routed to setup with
+            no way to disable. */}
         <SettingRow
-          icon="language-outline"
-          title="Language"
-          value={langLabel}
-          onPress={() => router.push("/settings/language")}
+          icon="lock-closed-outline"
+          title="PIN lock"
+          subtitle={hasPin ? "4-digit PIN required on launch" : "App opens directly"}
+          right={
+            <Toggle
+              value={hasPin}
+              onChange={togglePin}
+            />
+          }
         />
+        {/* Change PIN — only meaningful when a PIN exists. Goes through
+            the same pin-set flow which now correctly re-focuses the
+            input on the "Re-enter PIN" stage (key={stage} fix). */}
+        {hasPin ? (
+          <SettingRow
+            icon="keypad-outline"
+            title="Change PIN"
+            subtitle="Pick a new 4-digit PIN"
+            onPress={() => router.push("/(auth)/pin-set")}
+          />
+        ) : null}
         <SettingRow
           icon="finger-print-outline"
           title="Biometric login"
-          subtitle={supported ? undefined : "Not available on this device"}
+          subtitle={
+            !supported
+              ? "Not available on this device"
+              : !hasPin
+                ? "Set a PIN first to enable"
+                : undefined
+          }
           right={
             <Toggle
               value={bioEnabled}
               onChange={toggleBio}
-              disabled={!supported}
+              disabled={!supported || !hasPin}
             />
           }
-        />
-        <SettingRow
-          icon="keypad-outline"
-          title="Change PIN"
-          onPress={() => router.push("/(auth)/pin-set")}
         />
         <SettingRow
           icon="notifications-outline"

@@ -573,7 +573,7 @@ const LegCell = memo(function LegCell({
       // dismissAll throws on some versions when there's nothing to
       // dismiss — ignore and fall through to push.
     }
-    router.push(`/trade/${encodeURIComponent(leg.token)}`);
+    router.push({ pathname: "/(tabs)/trade", params: { token: leg.token } });
   };
 
   if (empty) {

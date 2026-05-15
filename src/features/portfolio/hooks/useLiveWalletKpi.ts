@@ -54,7 +54,13 @@ export function useLiveWalletKpi(): LiveWalletKpi {
     if (rows.length === 0) return 0;
     let total = 0;
     for (const p of rows) {
-      total += (Number(p.unrealized_pnl) || 0) + (Number(p.realized_pnl) || 0);
+      // M2M shows ONLY unrealized P&L for OPEN positions. The realized
+      // component has already been credited to `available_balance` (see
+      // wallet_service.adjust on the close leg), so including it here
+      // double-counts the same profit — once in LEDGER BALANCE and once
+      // in M2M. That's the "M2M shows 4 lots' worth even after closing
+      // 1 lot" bug — realized from the closed lot kept showing up here.
+      total += Number(p.unrealized_pnl) || 0;
     }
     return total;
   }, [openPositions.data]);
