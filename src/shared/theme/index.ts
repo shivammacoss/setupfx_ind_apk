@@ -10,6 +10,6 @@ export { colors, spacing, typography, shadows, radii };
 export { darkPalette, lightPalette, applyPalette } from "./colors";
 export type { ColorToken, Palette } from "./colors";
 export type { SpacingToken } from "./spacing";
-export type { FontSize, FontWeight } from "./typography";
+export type { FontSize, FontWeight, TypographyVariant } from "./typography";
 export type { ShadowToken } from "./shadows";
 export type { RadiusToken } from "./radii";
