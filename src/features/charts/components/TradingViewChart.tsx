@@ -283,7 +283,15 @@ function TradingViewChartImpl({
       />
       {loading ? (
         <View pointerEvents="none" style={[styles.overlay, { backgroundColor: colors.bg }]}>
-          <ActivityIndicator color={colors.primary} />
+          <ActivityIndicator color={colors.primary} size="large" />
+          {/* Visible loading hint so a slow CDN fetch doesn't look like
+              the screen has crashed. The previous "ActivityIndicator
+              only" overlay on top of `colors.bg` (#0d0d0d dark mode)
+              was indistinguishable from a black-screen crash on slow
+              networks — the user reported it as an app crash. */}
+          <Text size="sm" tone="muted" style={{ marginTop: 12, fontWeight: "600" }}>
+            Loading chart…
+          </Text>
         </View>
       ) : null}
       {empty ? (

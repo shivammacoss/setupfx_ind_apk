@@ -61,7 +61,7 @@ function normalise(candles: BackendCandle[]): LWCBar[] {
   return out;
 }
 
-async function fetchHistory(token: string, interval: ChartInterval): Promise<LWCBar[]> {
+export async function fetchHistory(token: string, interval: ChartInterval): Promise<LWCBar[]> {
   const jwt = getAccessToken();
   if (!jwt) return [];
   const url =

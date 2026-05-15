@@ -1,9 +1,10 @@
-import { memo } from "react";
+import { memo, useState } from "react";
 import { Pressable, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, radii, spacing } from "@shared/theme";
 import { Text } from "@shared/ui/Text";
 import { formatINR, formatNumber } from "@shared/utils/format";
+import { InlineTradePanel } from "@features/portfolio/components/InlineTradePanel";
 
 export interface PositionRowData {
   id: string;
@@ -62,6 +63,11 @@ function fmtTime(iso: string | null | undefined): string {
 }
 
 function PositionRowV2Impl({ row, onPress, onClose, closing, onEditSlTp }: Props) {
+  // Tap-to-expand: shows the inline trade panel (BUY/SELL more lots,
+  // change Market↔Limit, see live bid/ask + high/low/open, exit the
+  // position in one tap). Closed positions stay collapsed because there
+  // is nothing to trade on top of them.
+  const [expanded, setExpanded] = useState(false);
   const isBuy = row.side === "BUY";
   const isUsd = row.currency_quote === "USD";
   const isOpen = row.status === "OPEN";
@@ -81,13 +87,22 @@ function PositionRowV2Impl({ row, onPress, onClose, closing, onEditSlTp }: Props
 
   return (
     <Pressable
-      onPress={onPress}
+      onPress={() => {
+        // Tap toggles the inline trade panel for OPEN positions. CLOSED
+        // rows fall through to the parent's onPress (used for the
+        // "tap row → open chart" navigation on the Closed tab).
+        if (isOpen) {
+          setExpanded((v) => !v);
+        } else {
+          onPress?.();
+        }
+      }}
       style={{
         flexDirection: "row",
         marginHorizontal: spacing.lg,
         borderRadius: radii.lg,
         borderWidth: 1,
-        borderColor: colors.border,
+        borderColor: expanded ? colors.primary : colors.border,
         backgroundColor: colors.bgElevated,
         overflow: "hidden",
       }}
@@ -349,6 +364,23 @@ function PositionRowV2Impl({ row, onPress, onClose, closing, onEditSlTp }: Props
               <SlTpChip label="TP" value={Number(row.target)} tone="buy" />
             ) : null}
           </View>
+        ) : null}
+
+        {/* ── Inline trade panel — only on OPEN rows when user taps the
+            card. Tapping again collapses. The panel hosts live bid/ask,
+            High/Low/Open/Last-trade-time, admin lot caps, Market/Limit
+            toggle, lot input + BUY/SELL action buttons + Exit Qty —
+            i.e. the user can top up the position OR exit it without
+            navigating away from the Portfolio tab. */}
+        {isOpen && expanded && row.instrument_token ? (
+          <InlineTradePanel
+            token={row.instrument_token}
+            symbol={row.symbol}
+            positionQty={row.quantity}
+            positionSide={row.side}
+            onExit={() => onClose?.()}
+            closing={closing}
+          />
         ) : null}
       </View>
     </Pressable>

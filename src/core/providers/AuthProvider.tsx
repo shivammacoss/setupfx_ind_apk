@@ -12,6 +12,7 @@ import { OptionChainAPI } from "@features/trade/api/market.api";
 import { ReportsAPI } from "@features/reports/api/reports.api";
 import { LedgerAPI } from "@features/wallet/api/ledger.api";
 import { fetchMarketNews, NEWS_QUERY_KEY } from "@features/trade/components/MarketNews";
+import { fetchHistory, historyKey } from "@features/charts/hooks/useHistory";
 
 // Indian indices that account for ~90 % of option-chain views. Pre-fetched
 // on auth so the first tap on the chart's "Options" button paints from
@@ -186,6 +187,19 @@ export function AuthProvider({ children }: Props) {
           staleTime: 2_500,
         }),
       ),
+      // Chart history for the Trade-tab default (NIFTY 256265, 5m).
+      // Opening the Trade tab is one of the slowest cold paths because
+      // the WebView, the Lightweight Charts script, AND the history API
+      // round-trip all run in parallel — and the user sees the chart
+      // panel grey until the LAST of them returns. Pre-warming the
+      // history here means by the time the WebView reports ready, the
+      // bars are already sitting in `["history", "256265", "5"]` and the
+      // chart paints in one frame.
+      qc.prefetchQuery({
+        queryKey: historyKey("256265", "5"),
+        queryFn: () => fetchHistory("256265", "5"),
+        staleTime: 60_000,
+      }),
     ]);
   }, [isAuthed, qc]);
 
