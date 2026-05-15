@@ -89,7 +89,6 @@ function fmtSegmentLabel(segment?: string, exchange?: string): string {
 export function OrdersScreen() {
   const [tab, setTab] = useState<TabKey>("open");
   const [sideFilter, setSideFilter] = useState<SideFilter>("all");
-  const [collapsed, setCollapsed] = useState(false);
   const { data, isLoading, isError, error, refetch } = useOrders({
     limit: 200,
   });
@@ -136,27 +135,17 @@ export function OrdersScreen() {
   return (
     <Screen padded={false}>
       {/* Header */}
-      <Pressable onPress={() => setCollapsed((v) => !v)}>
-        <View
-          style={{
-            flexDirection: "row",
-            alignItems: "center",
-            paddingHorizontal: spacing.lg,
-            paddingTop: spacing.md,
-            paddingBottom: spacing.sm,
-          }}
-        >
-          <Text style={{ fontSize: 26, fontWeight: "800", flex: 1 }}>Orders</Text>
-          <Ionicons
-            name={collapsed ? "chevron-up" : "chevron-down"}
-            size={22}
-            color={colors.textMuted}
-          />
-        </View>
-      </Pressable>
+      <View
+        style={{
+          paddingHorizontal: spacing.lg,
+          paddingTop: spacing.md,
+          paddingBottom: spacing.sm,
+        }}
+      >
+        <Text style={{ fontSize: 26, fontWeight: "800" }}>Orders</Text>
+      </View>
 
-      {!collapsed ? (
-        <>
+      <>
           {/* Tabs row */}
           <View
             style={{
@@ -249,7 +238,6 @@ export function OrdersScreen() {
             />
           )}
         </>
-      ) : null}
     </Screen>
   );
 }
