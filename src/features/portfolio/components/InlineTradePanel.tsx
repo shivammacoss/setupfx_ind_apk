@@ -11,6 +11,7 @@ import {
   useEffectiveSettings,
 } from "@features/trade/hooks/useEffectiveSettings";
 import { usePlaceOrder } from "@features/trade/hooks/usePlaceOrder";
+import { lookupInfowayLot } from "@features/trade/utils/infowayLots";
 import { useWalletSummary } from "@features/wallet/hooks/useWallet";
 import { useUiStore } from "@shared/store/ui.store";
 import { sounds } from "@shared/services/sounds";
@@ -79,7 +80,20 @@ function InlineTradePanelImpl({
 
   const maxLot = Number(effective.data?.max_lot ?? 0) || null;
   const orderLot = Number(effective.data?.order_lot ?? 0) || null;
-  const lotSize = Number(effective.data?.lot_size ?? 0) || 1;
+  // Three-source lot_size resolution — see TradeSheet's `lotSizeForConv`
+  // comment for the full rationale. Mirror the same priority here so a
+  // pre-restart backend returning `lot_size = 1` for crypto/forex still
+  // gives the user a working LOT⇄QTY toggle.
+  const backendLotSize = Number(effective.data?.lot_size ?? 0);
+  const fallbackLotSize = lookupInfowayLot(symbol) ?? lookupInfowayLot(token);
+  const lotSize =
+    backendLotSize > 1
+      ? backendLotSize
+      : fallbackLotSize && fallbackLotSize > 1
+      ? fallbackLotSize
+      : backendLotSize > 0
+      ? backendLotSize
+      : 1;
   const intradayLimit = Number(effective.data?.intraday_lot_limit ?? 0) || null;
   const availMargin = Number(wallet.data?.available_balance ?? 0);
 

@@ -27,6 +27,7 @@ import {
   useEffectiveSettings,
 } from "@features/trade/hooks/useEffectiveSettings";
 import { useInstrumentLabel } from "@features/trade/hooks/useInstrument";
+import { lookupInfowayLot } from "@features/trade/utils/infowayLots";
 import { useWalletSummary } from "@features/wallet/hooks/useWallet";
 import { usePnLSummary } from "@features/portfolio/hooks/usePositions";
 import { useUiStore } from "@shared/store/ui.store";
@@ -245,12 +246,26 @@ export const TradeSheet = forwardRef<TradeSheetRef, TradeSheetProps>(({ initialA
     void Haptics.selectionAsync();
   }
 
-  // Resolved lot_size for this instrument (admin's segment settings).
-  // Falls back to 1 when the settings haven't resolved yet — that keeps
-  // LOT ↔ QTY conversion a no-op until we have a real lot table.
+  // Resolved lot_size for this instrument. Three sources, first non-1
+  // wins:
+  //   1. Backend's `/segment-settings/effective` — authoritative when
+  //      the backend has been restarted with the infoway-lot heal.
+  //   2. APK-side `lookupInfowayLot` — defensive fallback so crypto /
+  //      forex / metals / energy convert correctly even if the backend
+  //      still returns the stale `instrument.lot_size = 1` (legacy
+  //      auto-created rows).
+  //   3. `1` — neutral default; toggle becomes a visual no-op for
+  //      symbols where 1 lot really does equal 1 contract.
+  const backendLotSize = Number(effective.data?.lot_size ?? 0);
+  const fallbackLotSize =
+    lookupInfowayLot(target?.symbol ?? null) ?? lookupInfowayLot(target?.token ?? null);
   const lotSizeForConv =
-    effective.data?.lot_size != null && effective.data.lot_size > 0
-      ? Number(effective.data.lot_size)
+    backendLotSize > 1
+      ? backendLotSize
+      : fallbackLotSize && fallbackLotSize > 1
+      ? fallbackLotSize
+      : backendLotSize > 0
+      ? backendLotSize
       : 1;
 
   // Derived display value for the stepper input — `lots` is the
