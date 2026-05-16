@@ -37,6 +37,7 @@ import type {
   Position,
 } from "@features/portfolio/types/position.types";
 import { useTickerStore } from "@features/trade/store/ticker.store";
+import { useTickerSubscription } from "@features/trade/hooks/useTickers";
 
 type TabKey = "position" | "active" | "closed";
 
@@ -178,6 +179,25 @@ export function PortfolioScreen() {
   const openPositions = useOpenPositions();
   const closedPositions = useClosedPositions();
   const activeTrades = useActiveTrades();
+
+  // Subscribe every open-position instrument to the marketdata WS so the
+  // row's <LivePositionRow> wrapper can recompute P/L from real-time ticks
+  // — that's what makes a freshly placed trade's P/L start ticking within
+  // ~100-300 ms instead of waiting on the 3-5 s positions refetch. Without
+  // this, the ticker store has no data for newly-traded tokens and the
+  // P/L stays at the server-cached value (initial 0) until the next poll.
+  const liveTokens = useMemo(() => {
+    const out: string[] = [];
+    for (const p of openPositions.data ?? []) {
+      if (p.instrument_token) out.push(String(p.instrument_token));
+    }
+    for (const t of activeTrades.data ?? []) {
+      if (t.instrument_token) out.push(String(t.instrument_token));
+    }
+    return Array.from(new Set(out));
+  }, [openPositions.data, activeTrades.data]);
+  useTickerSubscription(liveTokens);
+
   const squareoff = useSquareoffPosition();
   const closeTrade = useCloseActiveTrade();
   const squareoffAll = useSquareoffAll();
