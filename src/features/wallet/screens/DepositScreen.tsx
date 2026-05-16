@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Image,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -31,6 +32,11 @@ import {
 } from "@shared/utils/imagePicker";
 import { UpiQrPanel } from "@features/wallet/components/UpiQrPanel";
 import type { CompanyBank } from "@features/wallet/types/wallet.types";
+import {
+  buildMailtoUrl,
+  buildWhatsappUrl,
+  useSupportContacts,
+} from "@features/support/useSupport";
 
 const QUICK_AMOUNTS = [500, 1000, 5000, 10000, 25000];
 const PAYMENT_MODES = ["UPI", "NEFT", "RTGS", "IMPS", "BANK_TRANSFER"] as const;
@@ -136,18 +142,16 @@ export default function DepositScreen() {
       pushToast({ kind: "error", message: "Pick a payment method" });
       return;
     }
-    if (!utrNumber.trim()) {
-      pushToast({
-        kind: "error",
-        message: "Enter the UTR / transaction number after payment",
-      });
-      return;
-    }
+    // UTR is now OPTIONAL — the user wants users to be able to submit
+    // the deposit request without it (often the user pays first, then
+    // copies the UTR from their bank app later). The admin approval
+    // step still requires evidence (screenshot recommended), so the
+    // approval workflow catches missing-UTR cases.
     try {
       await deposit.mutateAsync({
         amount: n,
         payment_mode: paymentMode,
-        utr_number: utrNumber.trim(),
+        utr_number: utrNumber.trim() || undefined,
         screenshot_url: screenshotUrl || undefined,
         user_remark: userRemark || undefined,
         bank_account_id: bankAccountId,
@@ -165,10 +169,58 @@ export default function DepositScreen() {
   const submitting = deposit.isPending;
   const uploading = upload.isPending;
 
+  // ── Support contacts ─────────────────────────────────────────────
+  // Admin-managed via /admin/settings/platform. The deposit page is a
+  // common place where users get stuck (UTR copy issues, screenshot
+  // size, bank-mismatch); surfacing a "Chat support" pill at the top
+  // means they can reach out without abandoning the form.
+  const { data: support } = useSupportContacts();
+  const depositWaUrl = buildWhatsappUrl(
+    support?.whatsapp,
+    "Hi, I need help adding funds to my SetupFX account",
+  );
+  const depositMailUrl = buildMailtoUrl(support?.email, {
+    subject: "SetupFX deposit help",
+  });
+
   return (
     <Screen padded={false}>
       <View style={{ paddingHorizontal: spacing.lg }}>
-        <Header title="Add funds" back />
+        <Header
+          title="Add funds"
+          back
+          right={
+            depositWaUrl || depositMailUrl ? (
+              <Pressable
+                onPress={() => {
+                  const url = depositWaUrl ?? depositMailUrl!;
+                  void Linking.openURL(url);
+                }}
+                hitSlop={8}
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 6,
+                  paddingHorizontal: 10,
+                  paddingVertical: 6,
+                  borderRadius: 999,
+                  borderWidth: 1,
+                  borderColor: colors.border,
+                  backgroundColor: colors.bgElevated,
+                }}
+              >
+                <Ionicons
+                  name={depositWaUrl ? "logo-whatsapp" : "mail-outline"}
+                  size={13}
+                  color={depositWaUrl ? "#25D366" : colors.primary}
+                />
+                <Text size="xs" style={{ fontWeight: "700" }}>
+                  Support
+                </Text>
+              </Pressable>
+            ) : undefined
+          }
+        />
       </View>
 
       <KeyboardAvoidingView
@@ -314,7 +366,7 @@ export default function DepositScreen() {
 
         <View onLayout={capture(yUtr)}>
           <Input
-            label="UTR / Transaction reference *"
+            label="UTR / Transaction reference (optional)"
             value={utrNumber}
             onChangeText={setUtrNumber}
             placeholder="From your bank / UPI app receipt"

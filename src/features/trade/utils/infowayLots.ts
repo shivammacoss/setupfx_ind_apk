@@ -76,8 +76,9 @@ export function lookupInfowayLot(symbol: string | null | undefined): number | nu
   }
   // Trailing `T` on Binance crypto (BTCUSDT → BTCUSD) so we hit the
   // same canonical key.
-  if (s.endsWith("USDT") && KNOWN_LOTS[s.slice(0, -1)]) {
-    return KNOWN_LOTS[s.slice(0, -1)];
+  if (s.endsWith("USDT")) {
+    const trimmed = s.slice(0, -1);
+    if (KNOWN_LOTS[trimmed] != null) return KNOWN_LOTS[trimmed] ?? null;
   }
   return KNOWN_LOTS[s] ?? null;
 }

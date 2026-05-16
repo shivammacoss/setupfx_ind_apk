@@ -7,6 +7,7 @@ import type { WalletSummary } from "@features/wallet/types/wallet.types";
 import { ApiError } from "@core/api/errors";
 import { useUiStore } from "@shared/store/ui.store";
 import { useTickerStore } from "@features/trade/store/ticker.store";
+import { freezePositionPollersForPlace } from "@features/portfolio/hooks/usePositions";
 
 // Hints passed by call-sites (BuySellBar / TradeSheet) so the optimistic
 // position row can show a proper symbol / exchange in the Portfolio tab
@@ -174,6 +175,15 @@ export function usePlaceOrder() {
     },
 
     onMutate: async (body) => {
+      // Pause the positions + active-trades pollers for ~2.5 s so the
+      // optimistic row we're about to insert isn't immediately overwritten
+      // by a refetch that fires while the backend's matching engine is
+      // still committing the trade. This was the "trade dikhi, 1 sec ke
+      // liye gayab ho gayi, fir vapas aayi" symptom — the next poll
+      // landed before the server committed, returned the old list, and
+      // the optimistic row got replaced until the post-commit poll.
+      freezePositionPollersForPlace();
+
       const tempOrderId = `tmp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
       const tempPositionId = `tmp-pos-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
       const tempTradeId = `tmp-trade-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;

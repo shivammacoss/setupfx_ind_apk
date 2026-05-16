@@ -58,14 +58,18 @@ function num(v: string): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-// Compact INR formatter for the 6-KPI grid — turns 81052 into "81.05 K"
-// and 8105200 into "81.05 L". Matches the reference card.
+// Full INR formatter for the 6-KPI grid — renders the actual rupee
+// amount with Indian lakh/crore grouping (2,12,345.67) instead of
+// abbreviating to "K" / "L" / "Cr". The previous compact variant was
+// removed per user feedback: traders prefer seeing the exact figure
+// on the wallet strip, not a rounded summary that hid the last digits.
+const _inrFull = new Intl.NumberFormat("en-IN", {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
 function compactINR(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return "—";
-  const abs = Math.abs(v);
-  if (abs >= 1_00_000) return `₹ ${(v / 1_00_000).toFixed(2)} L`;
-  if (abs >= 1_000) return `₹ ${(v / 1_000).toFixed(2)} K`;
-  return `₹ ${v.toFixed(2)}`;
+  return `₹${_inrFull.format(v)}`;
 }
 
 function Backdrop(props: BottomSheetBackdropProps) {

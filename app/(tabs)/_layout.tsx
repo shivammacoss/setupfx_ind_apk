@@ -101,7 +101,7 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="portfolio"
         options={{
-          tabBarLabel: "Position",
+          tabBarLabel: "Positions",
           // Pie-chart icon reads as "portfolio allocation" / "open positions
           // by instrument" at a glance — much more on-theme for an Indian
           // trading app than a generic briefcase.

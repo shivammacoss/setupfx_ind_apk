@@ -1,4 +1,4 @@
-import { Pressable, ScrollView, View } from "react-native";
+import { Linking, Pressable, ScrollView, View } from "react-native";
 import { router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { Screen } from "@shared/components/Screen";
@@ -13,6 +13,11 @@ import { useLogout } from "@features/auth/hooks/useAuth";
 import { useWallet } from "@features/wallet/hooks/useWallet";
 import { QuickTile } from "@features/profile/components/QuickTile";
 import { ProfileSection } from "@features/profile/components/ProfileSection";
+import {
+  buildMailtoUrl,
+  buildWhatsappUrl,
+  useSupportContacts,
+} from "@features/support/useSupport";
 
 // Every row here maps 1:1 onto a backend endpoint that exists in
 // `setupfx-ind_web/backend`. Anything that doesn't have a backend
@@ -28,6 +33,18 @@ export function ProfileScreen() {
   const user = useAuthStore((s) => s.user);
   const logout = useLogout();
   const { data: wallet } = useWallet();
+  const { data: support } = useSupportContacts();
+  // Pre-compose the launchable URLs once per render. Both helpers
+  // return null when the underlying value is unset or invalid, so the
+  // Support section below hides individual rows that have no target.
+  const supportEmailUrl = buildMailtoUrl(support?.email, {
+    subject: "SetupFX support request",
+  });
+  const supportWaUrl = buildWhatsappUrl(
+    support?.whatsapp,
+    "Hi, I need help with my SetupFX account",
+  );
+  const hasSupport = !!(supportEmailUrl || supportWaUrl);
 
   const fundsLabel = wallet ? formatINR(wallet.available_balance) : "₹0.00";
 
@@ -160,6 +177,34 @@ export function ProfileScreen() {
             />
           </ProfileSection>
         </View>
+
+        {hasSupport ? (
+          <View style={{ marginTop: 12 }}>
+            <ProfileSection title="Support">
+              {supportWaUrl ? (
+                <Row
+                  icon="logo-whatsapp"
+                  title="WhatsApp support"
+                  subtitle={support?.whatsapp || "Chat with us"}
+                  divider={!!supportEmailUrl}
+                  onPress={() => {
+                    void Linking.openURL(supportWaUrl);
+                  }}
+                />
+              ) : null}
+              {supportEmailUrl ? (
+                <Row
+                  icon="mail-outline"
+                  title="Email support"
+                  subtitle={support?.email || "support@setupfx.com"}
+                  onPress={() => {
+                    void Linking.openURL(supportEmailUrl);
+                  }}
+                />
+              ) : null}
+            </ProfileSection>
+          </View>
+        ) : null}
 
         <View style={{ marginTop: 16 }}>
           <Pressable onPress={() => logout.mutate()}>

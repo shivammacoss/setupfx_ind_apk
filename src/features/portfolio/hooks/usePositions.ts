@@ -25,15 +25,34 @@ const PNL_KEY = ["positions", "pnl-summary"] as const;
 const ACTIVE_KEY = ["positions", "active-trades"] as const;
 const HOLDINGS_KEY = ["holdings"] as const;
 
-// Module-level "freeze" timestamps — when a close mutation runs, we set
-// these so background pollers (refetchInterval) skip firing during the
-// freeze window. The optimistic clear stays on screen until the WS push
-// from UserEventsProvider syncs the real state. Prevents the "row pops
-// back for a split second" race when polling lands while the matching
-// engine is still processing the close.
+// Module-level "freeze" timestamps — when a close OR place mutation runs,
+// we set these so background pollers (refetchInterval) skip firing during
+// the freeze window. The optimistic row (insert on place / clear on close)
+// stays on screen until the WS push from UserEventsProvider syncs the real
+// state. Prevents two distinct race symptoms the user reported:
+//   • Close: "row pops back for a split second" — poll lands while
+//     matching engine is still processing the close → returns the row.
+//   • Place: "new trade appears, disappears for ~1s, then comes back" —
+//     poll fires within ~1s of the optimistic insert, server hasn't
+//     committed the position yet → poll returns the old list WITHOUT the
+//     new row → optimistic row overwritten → next poll has the real
+//     row → it pops back. Freezing the poller during the matching
+//     window keeps the optimistic insert visible until WS reconciles.
 let _openPositionsFreezeUntil = 0;
 let _activeTradesFreezeUntil = 0;
 const CLOSE_FREEZE_MS = 2500;
+const PLACE_FREEZE_MS = 2500;
+
+/**
+ * Pause the open-positions + active-trades refetchInterval for ~2.5 s.
+ * Called from usePlaceOrder.onMutate so the optimistic row a user just
+ * placed isn't overwritten by a poll that lands before the backend's
+ * matching engine commits the real position.
+ */
+export function freezePositionPollersForPlace(): void {
+  _openPositionsFreezeUntil = Date.now() + PLACE_FREEZE_MS;
+  _activeTradesFreezeUntil = Date.now() + PLACE_FREEZE_MS;
+}
 
 // `keepPreviousData` is critical for the close-position UX — without it,
 // after the user closes a row, the next scheduled poll briefly sets the
@@ -157,6 +176,65 @@ function scheduleClosedSync(qc: ReturnType<typeof useQueryClient>): void {
     void qc.invalidateQueries({ queryKey: CLOSED_KEY });
     void qc.invalidateQueries({ queryKey: PNL_KEY });
   }, 2_000);
+}
+
+/**
+ * Insert a synthetic CLOSED copy of the position we just squared off
+ * into the CLOSED_KEY cache so the user sees the row land on the Closed
+ * tab on the SAME FRAME as the tap — no waiting on the 2 s backend
+ * settle + REST refetch. The matching engine's eventual /ws/user push
+ * (or the deferred refetch at 2 s) overwrites this stub with the real
+ * closed row carrying the authoritative realized_pnl / closed_at /
+ * close_reason. Returns the previous snapshot for rollback on error.
+ */
+function insertOptimisticClosedPosition(
+  qc: QueryClient,
+  closing: Position,
+  closeReason: string = "USER",
+): Position[] | undefined {
+  const prev = qc.getQueryData<Position[]>(CLOSED_KEY);
+  const nowIso = new Date().toISOString();
+  // Roll unrealized into realized so the row shows real P&L instead of
+  // 0 in the brief window before WS sync. Backend will replace with the
+  // authoritative number a moment later.
+  const realizedSnapshot =
+    Number(closing.realized_pnl ?? 0) +
+    Number(closing.unrealized_pnl ?? 0);
+  const optimisticClosed: Position = {
+    ...closing,
+    // Mark the synthetic row so we can dedupe against the eventual
+    // real row when WS push lands.
+    id: `tmp-closed-${closing.id}-${Date.now()}`,
+    status: "CLOSED",
+    quantity: 0,
+    // Preserve the size the user actually traded so the Closed-tab card
+    // shows the right qty/lots pill instead of "×0".
+    opening_quantity:
+      closing.opening_quantity ?? Math.abs(closing.quantity ?? 0),
+    realized_pnl: String(realizedSnapshot),
+    unrealized_pnl: "0",
+    margin_used: "0",
+    closed_at: nowIso,
+    close_reason: closeReason,
+  } as Position;
+  // Newest-first — matches the backend's `-closed_at` sort order so the
+  // row lands at the top of the Closed tab.
+  qc.setQueryData<Position[]>(CLOSED_KEY, (cur) => {
+    const list = cur ?? [];
+    return [optimisticClosed, ...list];
+  });
+  return prev;
+}
+
+/**
+ * Roll back any optimistic Closed-tab insertion on mutation failure.
+ */
+function restoreClosedCache(
+  qc: QueryClient,
+  snapshot: Position[] | undefined,
+): void {
+  if (snapshot === undefined) return;
+  qc.setQueryData<Position[]>(CLOSED_KEY, snapshot);
 }
 
 // Build a synthetic optimistic close order so the Orders tab shows the
@@ -403,6 +481,7 @@ export function useCloseActiveTrade() {
       // Release the parent position's margin so MARGIN AVAILABLE jumps up
       // and MARGIN USED drops on the same frame as the tap.
       let prevWallet: WalletSummaryShape | undefined;
+      let prevClosed: Position[] | undefined;
       if (closingTrade) {
         const parent = openSnap?.find(
           (p) =>
@@ -411,6 +490,16 @@ export function useCloseActiveTrade() {
         );
         if (parent) {
           prevWallet = releaseMarginOptimistically(qc, [parent]);
+          // If this active-trade close fully flattens the parent
+          // position, surface the row on the Closed tab immediately
+          // — instant Closed-tab insertion to match what the user
+          // expects (was 1-2 s delay before the REST refetch landed).
+          const dirSign = Math.sign(parent.quantity || 0) || 1;
+          const reducedQty = (closingTrade.quantity || 0) * dirSign;
+          const wouldBeRemaining = (parent.quantity ?? 0) - reducedQty;
+          if (Math.abs(wouldBeRemaining) < 1e-9) {
+            prevClosed = insertOptimisticClosedPosition(qc, parent);
+          }
         } else {
           prevWallet = qc.getQueryData<WalletSummaryShape>(WALLET_SUMMARY_KEY);
         }
@@ -420,7 +509,7 @@ export function useCloseActiveTrade() {
       _openPositionsFreezeUntil = Date.now() + CLOSE_FREEZE_MS;
       sounds.close();
       pushToast({ kind: "success", message: "Trade closed", ttlMs: 1500 });
-      return { activeSnap, openSnap, prevOrders, prevWallet };
+      return { activeSnap, openSnap, prevOrders, prevWallet, prevClosed };
     },
     onSuccess: () => {
       // After the HTTP returns 200, the matching engine has flipped (or
@@ -437,6 +526,7 @@ export function useCloseActiveTrade() {
       if (ctx?.prevWallet !== undefined) {
         qc.setQueryData(WALLET_SUMMARY_KEY, ctx.prevWallet);
       }
+      restoreClosedCache(qc, ctx?.prevClosed);
       rollbackOrders(qc, ctx?.prevOrders);
       _activeTradesFreezeUntil = 0;
       _openPositionsFreezeUntil = 0;
@@ -449,60 +539,163 @@ export function useSquareoffAll() {
   const qc = useQueryClient();
   const pushToast = useUiStore((s) => s.pushToast);
   return useMutation({
-    mutationFn: () => PositionsAPI.squareoffAll(),
+    // Custom mutation function: read the current OPEN_KEY snapshot, split
+    // into tradable (market-open) vs blocked (market-closed) groups, fire
+    // a single squareoff per tradable row. Backend's bulk endpoint had no
+    // market-hours guard — tapping "Close All" with MCX positions at 2 AM
+    // would force-close them anyway (the bug the user reported). Doing
+    // the filter client-side AND calling individual squareoffs gives us
+    // both predictable per-row behaviour and a clear blocked-count.
+    mutationFn: async () => {
+      const openSnap = qc.getQueryData<Position[]>(OPEN_KEY) ?? [];
+      const tradable: Position[] = [];
+      const blockedLabels = new Set<string>();
+      for (const p of openSnap) {
+        if (Math.abs(p.quantity || 0) <= 0) continue;
+        if (isInstrumentMarketOpen(p.segment_type, p.exchange)) {
+          tradable.push(p);
+        } else {
+          blockedLabels.add(marketLabel(p.segment_type, p.exchange));
+        }
+      }
+      if (tradable.length === 0) {
+        // Nothing to do — every open position is on a closed market.
+        // Surface ALL blocked-market labels so the user knows why
+        // nothing happened (no silent no-op).
+        const labels = Array.from(blockedLabels).join(", ");
+        pushToast({
+          kind: "warn",
+          message: labels
+            ? `${labels} market is closed — nothing to square off`
+            : "Markets are closed — try during trading hours",
+          ttlMs: 3500,
+        });
+        throw new ApiError(
+          "All markets closed for open positions",
+          "MARKET_CLOSED_ALL",
+        );
+      }
+      // Fire per-row squareoffs in parallel — much faster than serial and
+      // the backend handles each independently. Promise.allSettled so one
+      // row's hold-time / validation rejection doesn't block the rest.
+      const results = await Promise.allSettled(
+        tradable.map((p) => PositionsAPI.squareoff(p.id)),
+      );
+      let placed = 0;
+      let failed = 0;
+      for (const r of results) {
+        if (r.status === "fulfilled") placed += 1;
+        else failed += 1;
+      }
+      return {
+        squared_off: placed,
+        total: tradable.length,
+        blocked_by_hold_time: failed,
+        // Surface the market-closed list so the toast in onSuccess can
+        // mention which segments were skipped.
+        blocked_markets: Array.from(blockedLabels),
+      };
+    },
     onMutate: () => {
       void qc.cancelQueries({ queryKey: OPEN_KEY });
       void qc.cancelQueries({ queryKey: ACTIVE_KEY });
       void qc.cancelQueries({ queryKey: ["orders"] });
-      const openSnap = qc.getQueryData<Position[]>(OPEN_KEY);
+      const openSnap = qc.getQueryData<Position[]>(OPEN_KEY) ?? [];
       const activeSnap = qc.getQueryData<ActiveTrade[]>(ACTIVE_KEY);
-      const count = openSnap?.length ?? 0;
-      qc.setQueryData<Position[]>(OPEN_KEY, []);
-      qc.setQueryData<ActiveTrade[]>(ACTIVE_KEY, []);
+
+      // Same split as mutationFn — only optimistically remove tradable
+      // (market-open) positions. Market-closed positions stay on the
+      // Position tab so the user can see they weren't touched.
+      const tradable: Position[] = [];
+      const blocked: Position[] = [];
+      for (const p of openSnap) {
+        if (Math.abs(p.quantity || 0) <= 0) continue;
+        if (isInstrumentMarketOpen(p.segment_type, p.exchange)) tradable.push(p);
+        else blocked.push(p);
+      }
+      if (tradable.length === 0) {
+        // No optimistic mutation when there's nothing to do — the
+        // mutationFn will throw MARKET_CLOSED_ALL and onError handles
+        // the toast. Returning undefined skips rollback.
+        return undefined;
+      }
+
+      const tradableIds = new Set(tradable.map((p) => p.id));
+      qc.setQueryData<Position[]>(OPEN_KEY, (prev) =>
+        (prev ?? []).filter((p) => !tradableIds.has(p.id)),
+      );
+      // Active trades whose parent is in `tradable` — drop them too.
+      const tradableTokens = new Set(
+        tradable.map((p) => `${p.instrument_token}|${p.product_type}`),
+      );
+      qc.setQueryData<ActiveTrade[]>(ACTIVE_KEY, (prev) =>
+        (prev ?? []).filter(
+          (t) => !tradableTokens.has(`${t.instrument_token}|${t.product_type}`),
+        ),
+      );
 
       // ─── Orders cache ────────────────────────────────────────────────
-      // Insert a synthetic close-order row for every position being
-      // batch-closed so Orders → Open shows the in-flight close fleet.
       const allOrderPages = qc.getQueriesData<Order[]>({ queryKey: ["orders"] });
       const prevOrders = new Map<readonly unknown[], Order[] | undefined>();
       for (const [key, value] of allOrderPages) {
         prevOrders.set(key, value);
       }
-      if (openSnap && openSnap.length > 0) {
-        const closeOrders: Order[] = openSnap
-          .filter((p) => Math.abs(p.quantity || 0) > 0)
-          .map((p) =>
-            makeOptimisticCloseOrder({
-              symbol: p.symbol,
-              instrument_token: p.instrument_token,
-              product_type: p.product_type,
-              positionQty: p.quantity,
-            }),
-          );
-        if (closeOrders.length > 0) {
-          for (const [key, value] of allOrderPages) {
-            if (Array.isArray(value)) {
-              qc.setQueryData<Order[]>(key, [...closeOrders, ...value]);
-            }
+      const closeOrders: Order[] = tradable.map((p) =>
+        makeOptimisticCloseOrder({
+          symbol: p.symbol,
+          instrument_token: p.instrument_token,
+          product_type: p.product_type,
+          positionQty: p.quantity,
+        }),
+      );
+      if (closeOrders.length > 0) {
+        for (const [key, value] of allOrderPages) {
+          if (Array.isArray(value)) {
+            qc.setQueryData<Order[]>(key, [...closeOrders, ...value]);
           }
         }
       }
 
       // ─── Wallet cache ───────────────────────────────────────────────
-      // Release the entire batch's margin so the user sees their full
-      // MARGIN AVAILABLE jump back up the same frame as the Batch Close
-      // tap. WS push reconciles the realized P&L within ~500 ms.
-      const prevWallet = releaseMarginOptimistically(qc, openSnap ?? []);
+      const prevWallet = releaseMarginOptimistically(qc, tradable);
+
+      // ─── Closed-tab cache ───────────────────────────────────────────
+      const prevClosed = qc.getQueryData<Position[]>(CLOSED_KEY);
+      const nowIso = new Date().toISOString();
+      const fakeClosed: Position[] = tradable.map((p) => ({
+        ...p,
+        id: `tmp-closed-${p.id}-${Date.now()}`,
+        status: "CLOSED",
+        quantity: 0,
+        opening_quantity:
+          p.opening_quantity ?? Math.abs(p.quantity ?? 0),
+        realized_pnl: String(
+          Number(p.realized_pnl ?? 0) + Number(p.unrealized_pnl ?? 0),
+        ),
+        unrealized_pnl: "0",
+        margin_used: "0",
+        closed_at: nowIso,
+        close_reason: "USER",
+      })) as Position[];
+      qc.setQueryData<Position[]>(CLOSED_KEY, (cur) => [
+        ...fakeClosed,
+        ...(cur ?? []),
+      ]);
 
       _openPositionsFreezeUntil = Date.now() + CLOSE_FREEZE_MS * 2;
       _activeTradesFreezeUntil = Date.now() + CLOSE_FREEZE_MS * 2;
       sounds.close();
+      const blockedLabels = new Set<string>();
+      for (const p of blocked) blockedLabels.add(marketLabel(p.segment_type, p.exchange));
       pushToast({
         kind: "success",
-        message: count > 0 ? `Closing ${count} positions` : "Closing positions",
-        ttlMs: 1500,
+        message:
+          blocked.length > 0
+            ? `Closing ${tradable.length} · ${Array.from(blockedLabels).join(", ")} closed`
+            : `Closing ${tradable.length} positions`,
+        ttlMs: 1800,
       });
-      return { openSnap, activeSnap, prevOrders, prevWallet };
+      return { openSnap, activeSnap, prevOrders, prevWallet, prevClosed };
     },
     onSuccess: (res) => {
       const blocked = res.blocked_by_hold_time;
@@ -517,12 +710,16 @@ export function useSquareoffAll() {
       scheduleClosedSync(qc);
     },
     onError: (e: ApiError, _vars, ctx) => {
-      if (ctx?.openSnap !== undefined) qc.setQueryData(OPEN_KEY, ctx.openSnap);
-      if (ctx?.activeSnap !== undefined) qc.setQueryData(ACTIVE_KEY, ctx.activeSnap);
-      if (ctx?.prevWallet !== undefined) {
+      // Skip rollback when ctx is undefined — that's the "everything was
+      // market-closed, nothing was mutated" early return from onMutate.
+      if (!ctx) return;
+      if (ctx.openSnap !== undefined) qc.setQueryData(OPEN_KEY, ctx.openSnap);
+      if (ctx.activeSnap !== undefined) qc.setQueryData(ACTIVE_KEY, ctx.activeSnap);
+      if (ctx.prevWallet !== undefined) {
         qc.setQueryData(WALLET_SUMMARY_KEY, ctx.prevWallet);
       }
-      rollbackOrders(qc, ctx?.prevOrders);
+      restoreClosedCache(qc, ctx.prevClosed);
+      rollbackOrders(qc, ctx.prevOrders);
       _openPositionsFreezeUntil = 0;
       _activeTradesFreezeUntil = 0;
       pushToast({ kind: "error", message: e.message });
@@ -654,6 +851,16 @@ export function useSquareoffPosition() {
         prevWallet = releaseMarginOptimistically(qc, [fakePos]);
       }
 
+      // ─── Closed-tab cache ───────────────────────────────────────────
+      // Only on a FULL close — partial closes leave the parent position
+      // open so it shouldn't appear on the Closed tab. The user reported
+      // "1-2 sec ke baad trade jaati hai Closed me" — this insertion
+      // moves the row instantly in the same render frame as the tap.
+      let prevClosed: Position[] | undefined;
+      if (closingPos && lots == null) {
+        prevClosed = insertOptimisticClosedPosition(qc, closingPos);
+      }
+
       _openPositionsFreezeUntil = Date.now() + CLOSE_FREEZE_MS;
       _activeTradesFreezeUntil = Date.now() + CLOSE_FREEZE_MS;
       // Tone + haptic cue so the user knows the close press registered
@@ -661,7 +868,7 @@ export function useSquareoffPosition() {
       // for sounds as BUY/SELL — see shared/services/sounds.ts.
       sounds.close();
       pushToast({ kind: "success", message: "Position closed", ttlMs: 1500 });
-      return { openSnap, activeSnap, prevOrders, prevWallet };
+      return { openSnap, activeSnap, prevOrders, prevWallet, prevClosed };
     },
     onSuccess: () => {
       // Defer-refetch Closed + PnL summary so the newly-closed position
@@ -675,6 +882,7 @@ export function useSquareoffPosition() {
       if (ctx?.prevWallet !== undefined) {
         qc.setQueryData(WALLET_SUMMARY_KEY, ctx.prevWallet);
       }
+      restoreClosedCache(qc, ctx?.prevClosed);
       rollbackOrders(qc, ctx?.prevOrders);
       _openPositionsFreezeUntil = 0;
       _activeTradesFreezeUntil = 0;

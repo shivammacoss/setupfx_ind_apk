@@ -165,10 +165,10 @@ function HeroCard({
       style={{
         borderRadius: radii.xl,
         padding: spacing.lg,
-        gap: spacing.md,
+        gap: spacing.lg,
       }}
     >
-      <View>
+      <View style={{ gap: 6 }}>
         <View
           style={{
             flexDirection: "row",
@@ -192,9 +192,9 @@ function HeroCard({
           mono
           style={{
             color: "#fff",
-            fontSize: 30,
+            fontSize: 28,
             fontWeight: "800",
-            marginTop: 4,
+            lineHeight: 36,
           }}
           numberOfLines={1}
           adjustsFontSizeToFit
@@ -203,7 +203,7 @@ function HeroCard({
           {loading ? "—" : formatINR(available)}
         </Text>
         {error ? (
-          <Text style={{ color: "rgba(255,255,255,0.85)", fontSize: 11, marginTop: 4 }}>
+          <Text style={{ color: "rgba(255,255,255,0.85)", fontSize: 11 }}>
             {error}
           </Text>
         ) : null}
@@ -214,7 +214,7 @@ function HeroCard({
           flexDirection: "row",
           backgroundColor: "rgba(0,0,0,0.18)",
           borderRadius: radii.lg,
-          paddingVertical: 12,
+          paddingVertical: 14,
           paddingHorizontal: 4,
         }}
       >

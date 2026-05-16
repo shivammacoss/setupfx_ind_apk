@@ -1,11 +1,15 @@
 import { toDecimal, type DecimalInput } from "./decimal";
 
 const inrFmt = new Intl.NumberFormat("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const inrCompact = new Intl.NumberFormat("en-IN", { notation: "compact", maximumFractionDigits: 2 });
 
-export function formatINR(v: DecimalInput, opts?: { compact?: boolean }): string {
+// `compact: true` used to emit Intl's "1.5L" / "2K" abbreviation. Per
+// user feedback that hid the exact figure on KPI tiles, so every
+// caller — including ones that pass `compact: true` for legacy
+// compatibility — now gets the full Indian-grouped value. Kept the
+// option in the signature so old call sites keep compiling.
+export function formatINR(v: DecimalInput, _opts?: { compact?: boolean }): string {
   const n = Number(toDecimal(v).toFixed(2));
-  return opts?.compact ? `₹${inrCompact.format(n)}` : `₹${inrFmt.format(n)}`;
+  return `₹${inrFmt.format(n)}`;
 }
 
 export function formatNumber(v: DecimalInput, dp = 2): string {

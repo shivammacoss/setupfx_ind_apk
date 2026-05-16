@@ -42,9 +42,9 @@ function ChartInfoBarImpl({ token, symbol, interval, segment, source }: Props) {
     v == null ? "—" : formatNumber(v, 2);
   const fmtVol = (v: number | null | undefined) => {
     if (v == null) return "—";
-    if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(2)}M`;
-    if (v >= 1_000) return `${(v / 1_000).toFixed(2)}K`;
-    return String(v);
+    // Full Indian-grouped number (52,34,567) — user-requested removal
+    // of K/M/L/Cr abbreviations across the whole product.
+    return Number(v).toLocaleString("en-IN");
   };
 
   return (

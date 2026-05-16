@@ -36,6 +36,7 @@ import type {
   ActiveTrade,
   Position,
 } from "@features/portfolio/types/position.types";
+import { useTickerStore } from "@features/trade/store/ticker.store";
 
 type TabKey = "position" | "active" | "closed";
 
@@ -83,12 +84,22 @@ function posToRow(p: Position): PositionRowData {
       : p.quantity > 0
       ? "BUY"
       : "SELL";
+  // On CLOSED rows the live `quantity` is 0 (the position is flat). The
+  // Closed-tab card needs to show the size the user actually traded, so
+  // fall back to `opening_quantity` (peak abs(qty) the server preserves
+  // across the close). Without this the "×0" pill the user reported
+  // showed up on every closed row.
+  const effectiveQty = isClosed
+    ? Math.abs(p.opening_quantity ?? p.quantity)
+    : Math.abs(p.quantity);
+
   // Lot count = absolute contracts / lot_size. Prefer the backend's
   // `lots` field when present (server already does this division and
   // carries the canonical lot table for index F&O), fall back to a
-  // local divide for older rows that pre-date the field.
+  // local divide. Use `effectiveQty` so closed rows derive lots from
+  // their opening quantity, not the post-close 0.
   const lotSize = Number(p.lot_size ?? 0) || 0;
-  const lotsFromQty = lotSize > 0 ? Math.abs(p.quantity) / lotSize : null;
+  const lotsFromQty = lotSize > 0 ? effectiveQty / lotSize : null;
   const lotsCount = (p.lots ?? lotsFromQty) ?? undefined;
 
   // P&L: for OPEN rows show ONLY `unrealized_pnl` (matches what the
@@ -111,7 +122,7 @@ function posToRow(p: Position): PositionRowData {
     symbol: p.symbol,
     exchange: p.exchange,
     side,
-    quantity: Math.abs(p.quantity),
+    quantity: effectiveQty,
     lots: lotsCount != null ? Number(lotsCount) : undefined,
     entry_price: Number(p.avg_price),
     ltp: Number(p.ltp),
@@ -268,7 +279,7 @@ export function PortfolioScreen() {
   // Tab order per user request: Position → Active → Closed
   const tabs: TabItem[] = useMemo(
     () => [
-      { key: "position", label: `Position (${openRows.length})` },
+      { key: "position", label: `Positions (${openRows.length})` },
       { key: "active", label: `Active (${activeRows.length})` },
       { key: "closed", label: `Closed (${closedRows.length})` },
     ],
@@ -546,7 +557,7 @@ export function PortfolioScreen() {
           )
         }
         renderItem={({ item }) => (
-          <PositionRowV2
+          <LivePositionRow
             row={item}
             onPress={() => onRowTap(item)}
             onClose={() => onCloseRow(item)}
@@ -701,5 +712,75 @@ function EmptyHint({
         </Text>
       ) : null}
     </View>
+  );
+}
+
+/**
+ * Wraps PositionRowV2 with a per-tick live P/L recompute. The cached
+ * `row.pnl` comes from the server (`unrealized_pnl` refreshed every
+ * 3-5 s by the positions poll), which is why a freshly-placed trade
+ * used to show "₹0.00" for the first 2-3 s — the server hadn't run
+ * its first refresh yet. Subscribing to the in-memory WS ticker store
+ * lets us recompute (ltp − entry) × qty on every tick so the row's
+ * P/L starts ticking the moment the next price arrives — typically
+ * within ~100-300 ms of the order being placed.
+ *
+ * Closed rows skip the recompute (their realised P&L is final and
+ * lives on `realized_pnl`, not `unrealized_pnl`).
+ *
+ * Heuristic for picking between live-derived and server-reported:
+ * prefer whichever has the larger magnitude. This:
+ *   • Lets live derivation drive the value for INR-quoted positions
+ *     (NIFTY, BTCINR mock, etc.) — server lags, derived is fresh.
+ *   • Falls back to the server's value for USD-quoted positions
+ *     (BTCUSD, EURUSD, XAUUSD) once it lands — server applies FX so
+ *     its INR magnitude blows past the client-side native-currency
+ *     number and "max-abs" naturally picks it.
+ *
+ * Mirrors the same pattern the web `<PositionRow>` already uses
+ * (frontend-user/components/trading/PositionsTabs.tsx).
+ */
+function LivePositionRow({
+  row,
+  onPress,
+  onClose,
+  onEditSlTp,
+  closing,
+}: {
+  row: PositionRowData;
+  onPress?: () => void;
+  onClose?: () => void;
+  onEditSlTp?: () => void;
+  closing?: boolean;
+}) {
+  const tick = useTickerStore((s) =>
+    row.instrument_token ? s.ticks[row.instrument_token] : undefined,
+  );
+
+  const liveRow = useMemo(() => {
+    if (row.status !== "OPEN") return row;
+    const liveLtp = tick?.ltp;
+    if (liveLtp == null || !Number.isFinite(liveLtp)) return row;
+    const avg = Number(row.entry_price);
+    const qty = Number(row.quantity);
+    if (!Number.isFinite(avg) || avg <= 0 || !Number.isFinite(qty) || qty <= 0) {
+      return { ...row, ltp: liveLtp };
+    }
+    const isBuy = row.side === "BUY";
+    const derivedPnl = (isBuy ? liveLtp - avg : avg - liveLtp) * qty;
+    const serverPnl = Number(row.pnl) || 0;
+    const displayPnl =
+      Math.abs(derivedPnl) >= Math.abs(serverPnl) ? derivedPnl : serverPnl;
+    return { ...row, ltp: liveLtp, pnl: displayPnl };
+  }, [row, tick?.ltp]);
+
+  return (
+    <PositionRowV2
+      row={liveRow}
+      onPress={onPress}
+      onClose={onClose}
+      onEditSlTp={onEditSlTp}
+      closing={closing}
+    />
   );
 }
